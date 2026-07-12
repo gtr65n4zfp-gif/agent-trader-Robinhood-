@@ -63,6 +63,25 @@ def _trend(points: list[dict], lookback: int = 8) -> dict | None:
     }
 
 
+def fetch_concept_trend(cik: str, tag_candidates: list[str]) -> dict | None:
+    """
+    Fetch a concept's trend, trying each tag in tag_candidates and keeping
+    whichever has the most recent data point — the ASC-606-style tag
+    migration this handles for _CONCEPTS below applies to other concepts
+    too (e.g. cash flow tags), so this is exposed for reuse rather than
+    kept private to build_brief().
+    """
+    best_points: list[dict] = []
+    for tag in tag_candidates:
+        try:
+            points = sec_client.get_concept(cik, tag)
+        except requests.RequestException:
+            continue   # not reported under this tag for this filer
+        if points and (not best_points or points[-1]["end"] > best_points[-1]["end"]):
+            best_points = points
+    return _trend(best_points)
+
+
 def build_brief(ticker: str, filing_forms: list[str] | None = None) -> dict:
     """
     Pull and organize this company's SEC data into a structured brief — no
@@ -74,17 +93,10 @@ def build_brief(ticker: str, filing_forms: list[str] | None = None) -> dict:
     ticker = ticker.upper().strip()
     cik = sec_client.ticker_to_cik(ticker)
 
-    concepts = {}
-    for label, tag_candidates in _CONCEPTS.items():
-        best_points: list[dict] = []
-        for tag in tag_candidates:
-            try:
-                points = sec_client.get_concept(cik, tag)
-            except requests.RequestException:
-                continue   # not reported under this tag for this filer
-            if points and (not best_points or points[-1]["end"] > best_points[-1]["end"]):
-                best_points = points
-        concepts[label] = _trend(best_points)
+    concepts = {
+        label: fetch_concept_trend(cik, tag_candidates)
+        for label, tag_candidates in _CONCEPTS.items()
+    }
 
     filings = sec_client.get_recent_filings(
         cik, forms=filing_forms or ["10-K", "10-Q", "8-K"], limit=6

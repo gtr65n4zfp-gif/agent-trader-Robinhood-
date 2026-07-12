@@ -64,6 +64,22 @@ def ticker_to_cik(ticker: str) -> str:
     raise ValueError(f"Ticker {ticker!r} not found in SEC ticker list.")
 
 
+# --- Company info ------------------------------------------------------
+def get_company_info(cik: str) -> dict:
+    """
+    Basic company metadata: name and SIC industry classification, from the
+    same submissions endpoint get_recent_filings() reads.
+    """
+    data = _get(SUBMISSIONS_URL.format(cik=cik)).json()
+    return {
+        "name": data.get("name"),
+        "sic": data.get("sic"),
+        "sic_description": data.get("sicDescription"),
+        "exchanges": data.get("exchanges"),
+        "tickers": data.get("tickers"),
+    }
+
+
 # --- Filings ---------------------------------------------------------------
 def get_recent_filings(cik: str, forms: list[str] | None = None, limit: int = 10) -> list[dict]:
     """
