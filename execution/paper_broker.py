@@ -10,6 +10,8 @@ market data), so this engine works today with no external connection.
 import json
 import os
 
+from agents import risk_vetoer
+
 from . import config, trade_log
 
 _PORTFOLIO_PATH = os.path.join(config.LOG_DIR, "paper_portfolio.json")
@@ -38,16 +40,33 @@ class PaperBroker:
         with open(_PORTFOLIO_PATH, "w") as f:
             json.dump({"cash": self.cash, "positions": self.positions}, f, indent=2)
 
+    # --- risk gate -----------------------------------------------------------
+    def _check_risk(self, symbol: str, side: str, quantity: float, price: float,
+                     prices: dict[str, float] | None) -> None:
+        """Run the risk vetoer; raise TradeError (and log the veto) if it blocks
+        the trade. Nothing can buy or sell through this broker without clearing
+        this — the gate lives here, not in whichever script happens to call in."""
+        account = self.account({**(prices or {}), symbol: price})
+        decision = risk_vetoer.review(symbol, side, quantity, price, account)
+        if not decision["approved"]:
+            trade_log.record(
+                "veto", symbol, quantity, price, paper=True, reason=decision["reason"],
+                extra={"seat": "risk_vetoer", "checks": decision["checks"], "detail": decision["detail"]},
+            )
+            raise TradeError(f"Risk vetoer blocked this trade: {decision['reason']}")
+
     # --- orders ------------------------------------------------------------
-    def buy(self, symbol: str, quantity: float, price: float, reason: str = "") -> dict:
+    def buy(self, symbol: str, quantity: float, price: float, reason: str = "",
+            prices: dict[str, float] | None = None) -> dict:
+        """prices: optional {symbol: price} for every other held position, so
+        the risk vetoer can value the whole account accurately. Omit and only
+        this symbol's position is valued precisely; others fall back to 0."""
         symbol = symbol.upper()
-        cost = quantity * price
         if quantity <= 0:
             raise TradeError("Quantity must be positive.")
-        if cost > config.MAX_TRADE_USD:
-            raise TradeError(
-                f"Order ${cost:,.2f} exceeds the ${config.MAX_TRADE_USD:,.2f} per-trade cap."
-            )
+        self._check_risk(symbol, "buy", quantity, price, prices)
+
+        cost = quantity * price
         if cost > self.cash:
             raise TradeError(f"Not enough cash: need ${cost:,.2f}, have ${self.cash:,.2f}.")
 
@@ -57,13 +76,22 @@ class PaperBroker:
         return trade_log.record("buy", symbol, quantity, price, paper=True, reason=reason,
                                 extra={"cost": cost, "cash_after": self.cash})
 
-    def sell(self, symbol: str, quantity: float, price: float, reason: str = "") -> dict:
+    def sell(self, symbol: str, quantity: float, price: float, reason: str = "",
+             prices: dict[str, float] | None = None) -> dict:
+        """See buy() for `prices`. Note: the vetoer's position-concentration
+        check never blocks a sell (selling only reduces exposure), but its
+        per-trade dollar cap still applies — a single sell larger than
+        MAX_TRADE_USD is blocked same as a buy. That's fine for manually
+        reasoned trades (split it into two calls); it'll need revisiting once
+        automated stop-loss/exit logic exists, so a real exit can't get stuck
+        unable to close a position that grew past the cap."""
         symbol = symbol.upper()
         held = self.positions.get(symbol, 0)
         if quantity <= 0:
             raise TradeError("Quantity must be positive.")
         if quantity > held:
             raise TradeError(f"Can't sell {quantity} {symbol}; only hold {held}.")
+        self._check_risk(symbol, "sell", quantity, price, prices)
 
         proceeds = quantity * price
         self.cash += proceeds
