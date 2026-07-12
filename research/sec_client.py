@@ -3,11 +3,12 @@ SEC EDGAR client — pulls company filings and financial data from the SEC's
 free public API (data.sec.gov). No account or API key required.
 
 The SEC asks that every request identify who's making it, via a User-Agent
-header with a contact. Set SEC_USER_AGENT in your environment (or config/.env)
-to something like "Your Name your-email@example.com". A default is provided so
-things work out of the box, but you should set your real contact before running
-this heavily — it's the SEC's fair-access rule, and they can rate-limit or block
-generic agents.
+header with a contact. Set the SEC_USER_AGENT environment variable (there's
+no .env auto-loading in this project — export it in whatever shell/session
+actually runs this code) to something like "Your Name your-email@example.com".
+A default is provided so things work out of the box, but you should set your
+real contact before running this heavily — it's the SEC's fair-access rule,
+and they can rate-limit or block generic agents.
 
 Docs: https://www.sec.gov/os/webmaster-faq#developers
 """
