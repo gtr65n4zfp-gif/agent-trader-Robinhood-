@@ -17,3 +17,6 @@ logs/*.jsonl
 
 # OS
 .DS_Store
+
+# Claude Code local settings (per-machine, never shared)
+.claude/settings.local.json
