@@ -47,11 +47,15 @@ and inventing it would be worse than leaving it out.
 
 2. Financial Performance & Health
    - Revenue and net income trend, with the period each figure covers.
-   - IMPORTANT: change_pct compares sequential filing periods, not
-     year-over-year. For a seasonal business a big sequential swing
-     (e.g. holiday quarter vs. the following quarter) is not a real
-     trend — flag this explicitly rather than reporting the raw
-     percentage as if it were a YoY comparison.
+   - Use change_pct_yoy (same fiscal period one year earlier) as the
+     real trend indicator — it's the seasonally-correct comparison.
+     change_pct_sequential (vs. the immediately prior filed period) is
+     secondary context at most ("momentum since the last filing"), and
+     for a seasonal business can swing wildly for no meaningful reason
+     (e.g. holiday quarter vs. the following quarter) — don't lead with
+     it, and don't present it as a trend on its own. If change_pct_yoy
+     is None, say the YoY comparison isn't available rather than
+     substituting the sequential figure silently.
    - Balance sheet strength: assets vs. stockholders' equity trend.
    - Cash flow: operating cash flow, capex, and free_cash_flow if
      present. Interim (10-Q) cash-flow figures are typically fiscal-
@@ -129,8 +133,12 @@ if __name__ == "__main__":
         if trend is None:
             print(f"  {label:22} not reported under this tag")
             continue
-        change = f"{trend['change_pct'] * 100:+.1f}%" if trend["change_pct"] is not None else "n/a"
-        print(f"  {label:22} {trend['latest_value']:>18,}  ({trend['latest_period']}, {change} vs prior)")
+        yoy = f"{trend['change_pct_yoy'] * 100:+.1f}% YoY" if trend["change_pct_yoy"] is not None else "YoY n/a"
+        seq = (
+            f"{trend['change_pct_sequential'] * 100:+.1f}% seq"
+            if trend["change_pct_sequential"] is not None else "seq n/a"
+        )
+        print(f"  {label:22} {trend['latest_value']:>18,}  ({trend['latest_period']}, {yoy}, {seq})")
 
     if brief["free_cash_flow"]:
         fcf = brief["free_cash_flow"]

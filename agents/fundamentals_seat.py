@@ -41,24 +41,53 @@ _CONCEPTS: dict[str, list[str]] = {
 }
 
 
+def _pct_change(latest: dict, prior: dict | None) -> float | None:
+    if not prior or not prior.get("value"):
+        return None
+    return round((latest["value"] - prior["value"]) / abs(prior["value"]), 4)
+
+
 def _trend(points: list[dict], lookback: int = 8) -> dict | None:
-    """Summarize a get_concept() series: latest value, the point before it,
-    and the change between them. None if nothing was reported at all."""
+    """
+    Summarize a get_concept() series: latest value plus two different
+    comparisons, because they answer different questions and conflating
+    them is exactly what produced a nonsense "-56%" reading for a seasonal
+    business (Apple's holiday quarter vs. the following quarter):
+
+    - change_pct_sequential: vs. whatever period was filed immediately
+      before this one. Answers "did anything change since the last
+      filing" — but for a seasonal business, consecutive fiscal periods
+      (e.g. Q1 vs Q2) aren't a real trend, just seasonality.
+    - change_pct_yoy: vs. the same fiscal_period one year earlier (e.g.
+      Q2 vs. Q2). The correct comparison for seasonal businesses; None if
+      no matching same-period-prior-year point is in the lookback window.
+
+    None if nothing was reported at all for this concept.
+    """
     if not points:
         return None
     recent = points[-lookback:]
     latest = recent[-1]
-    prior = recent[-2] if len(recent) > 1 else None
-    change_pct = (
-        (latest["value"] - prior["value"]) / abs(prior["value"])
-        if prior and prior["value"] else None
+
+    sequential_prior = recent[-2] if len(recent) > 1 else None
+
+    yoy_prior = next(
+        (
+            p for p in reversed(recent[:-1])
+            if p.get("fiscal_period") == latest.get("fiscal_period")
+            and isinstance(latest.get("fiscal_year"), int)
+            and p.get("fiscal_year") == latest["fiscal_year"] - 1
+        ),
+        None,
     )
+
     return {
         "latest_value": latest["value"],
         "latest_period": f"{latest.get('fiscal_year')} {latest.get('fiscal_period')}",
         "as_of": latest["end"],
-        "prior_value": prior["value"] if prior else None,
-        "change_pct": round(change_pct, 4) if change_pct is not None else None,
+        "prior_value": sequential_prior["value"] if sequential_prior else None,
+        "change_pct_sequential": _pct_change(latest, sequential_prior),
+        "change_pct_yoy": _pct_change(latest, yoy_prior),
         "history": recent,
     }
 
@@ -121,8 +150,12 @@ if __name__ == "__main__":
         if trend is None:
             print(f"  {tag:20} not reported under this tag")
             continue
-        change = f"{trend['change_pct'] * 100:+.1f}%" if trend["change_pct"] is not None else "n/a"
-        print(f"  {tag:20} {trend['latest_value']:>18,}  ({trend['latest_period']}, {change} vs prior)")
+        yoy = f"{trend['change_pct_yoy'] * 100:+.1f}% YoY" if trend["change_pct_yoy"] is not None else "YoY n/a"
+        seq = (
+            f"{trend['change_pct_sequential'] * 100:+.1f}% seq"
+            if trend["change_pct_sequential"] is not None else "seq n/a"
+        )
+        print(f"  {tag:20} {trend['latest_value']:>18,}  ({trend['latest_period']}, {yoy}, {seq})")
 
     print("\nRecent filings:")
     for f in brief["recent_filings"]:
