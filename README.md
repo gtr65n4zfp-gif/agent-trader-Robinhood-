@@ -32,9 +32,10 @@ only after it proves itself.
             account, agent-mediated (`execution/robinhood.py`)
       - [x] Proved live quote -> paper buy end-to-end, zero real-money risk
             (`execution/demo_live_paper.py`)
-      - [ ] Wire the council (Milestone 3) into an automated decision loop —
-            still no autonomous/scheduled trading; every trade above is
-            triggered manually with an explicit reason
+      - [x] Wire the council (Milestone 3) into an automated decision loop —
+            a scheduled cloud routine now runs the full council on a
+            weekday cadence, no manual trigger required (see Milestone 3's
+            automation entry below)
       - [ ] Real order placement stays behind `assert_paper_mode()` and the
             `AGENT_TRADER_LIVE` unlock phrase until profitability is proven
 - [x] Milestone 2: SEC research agent
@@ -43,7 +44,7 @@ only after it proves itself.
             YoY (not just sequential) comparison (`agents/fundamentals_seat.py`)
       - [x] Report layer: plain-English + structured company report, agent-
             authored from a structured brief (`research/report.py`)
-- [~] Milestone 3: The council (trade review agents) — see `agents/COUNCIL_DESIGN.md` for the blueprint
+- [x] Milestone 3: The council (trade review agents) — see `agents/COUNCIL_DESIGN.md` for the blueprint
       - [x] Risk vetoer seat — trade-size, volatility-scaled position, sector,
             drawdown, and daily-loss/frequency caps; structurally enforced
             inside `PaperBroker` (`agents/risk_vetoer.py`)
@@ -105,12 +106,26 @@ only after it proves itself.
             and both fail-safes (market-hours no-op, per-symbol bad-data
             skip) all verified deterministically
             (`automation/demo_run_pass.py`)
-      - [ ] Wire `run_pass.py` to an actual live cadence — blocked on
-            infrastructure outside this codebase, not the design: no git
-            remote to give a cloud routine, and Robinhood isn't available
-            as a claude.ai MCP connector for cloud routines yet (the
-            authenticated session this whole project uses is local/
-            interactive-only). Last piece before a real track record.
+      - [x] Wire `run_pass.py` to an actual live cadence — a scheduled
+            Claude Code cloud routine ("Agent Trader — Daily Council
+            Pass") runs weekdays at 15:00 UTC (mid-morning ET, chosen to
+            stay inside regular market hours across the DST shift).
+            `logs/trades.jsonl` and `logs/paper_portfolio.json` are now
+            tracked in git (everything else in `logs/` stays ignored) —
+            since every cloud invocation starts from a fresh checkout,
+            the routine commits+pushes those two files after each pass
+            that changes them; git is the persistence layer between
+            runs. Reset to a clean baseline first (the pre-automation
+            files were full of manual testing data — archived locally,
+            not deleted, as `logs/archive_pre_automation_*`) so the
+            go-live gate's round-trip count starts genuinely at zero.
+            Validated live: the first triggered run correctly detected
+            markets closed (a Sunday), no-op'd cleanly, and made no
+            commit — proving repo access, the Robinhood MCP connector,
+            and the market-hours fail-safe all work end to end in the
+            actual cloud environment. The first full weekday pass (real
+            entries/exits/holds, still `AUTOMATION_DRY_RUN`) runs
+            automatically next.
 - [ ] Milestone 4: Backtest / track paper P&L over time
 - [ ] Milestone 5: Real-money pilot — blocked until the go-live gate below is met
 - [ ] Milestone 6: Universe expansion — a screening/universe-selection funnel so

@@ -96,9 +96,16 @@ to cover them — before execution is ever armed for real.
 
 ## The routine
 
-Defined via the `schedule` skill: a scheduled Claude Code routine whose
-prompt, on each wake, tells the agent to:
+Defined via the `schedule` skill: a scheduled Claude Code routine
+("Agent Trader — Daily Council Pass," weekdays at 15:00 UTC — mid-
+morning ET year-round, chosen to stay inside regular hours across the
+DST shift) whose prompt, on each wake, tells the agent to:
 
+0. Cheap pre-check, no MCP calls: `config.market_is_open()` in plain
+   Python. If closed, call `run_pass({})` directly (it short-circuits on
+   the market-hours guard before ever touching the bundle) to still log
+   the `automation_noop` entry, and stop there — no point spending
+   Robinhood/SEC calls on a day nothing will trade.
 1. Confirm the Robinhood MCP session is authenticated (re-auth if not).
 2. For every symbol in `config.WATCHLIST`: call `get_equity_quotes`,
    `get_equity_technical_indicators` (type=atr/rsi/ema, and a second call
