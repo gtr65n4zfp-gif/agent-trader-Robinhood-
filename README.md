@@ -61,8 +61,21 @@ only after it proves itself.
             against real AAPL data for both a buy attempt (correctly vetoed
             on an already-over-concentrated account) and a hold
             (`agents/demo_council.py`)
-      - [ ] Regime/volatility filter (forced sit-out in choppy conditions)
-      - [ ] Exit logic (stop-loss / take-profit / regime-change / conviction-drop)
+      - [x] Exit logic — stop-loss, take-profit, and conviction-drop (a fresh
+            Judge re-decision that no longer supports holding), disjunctive
+            (first to fire wins); regime-change left as an explicit seam,
+            not built (`agents/exits.py`)
+      - [x] Cost-basis tracking, honest fills (slippage modeled on every
+            fill so paper P&L isn't a fantasy of free perfect execution),
+            and realized P&L on every close (`execution/paper_broker.py`)
+      - [x] Round-trip accounting — the correct Milestone 5 go-live counter
+            (a close realizing P&L, not an open) (`execution/trade_log.py`)
+      - [x] End-to-end proof: all three exit paths fired deterministically
+            against a real (isolated) paper account — stop-loss, take-
+            profit, and conviction-drop each closed a position with
+            correctly recorded realized P&L (`agents/demo_exits.py`)
+      - [ ] Regime/volatility filter (forced sit-out in choppy conditions) —
+            the seam for it is explicit in `agents/exits.py`, not built
       - [ ] Automated/scheduled cadence — every council run above is still
             triggered manually
 - [ ] Milestone 4: Backtest / track paper P&L over time

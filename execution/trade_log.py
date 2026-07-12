@@ -57,3 +57,34 @@ def count_trades_today() -> int:
         1 for e in read_all()
         if e["mode"] == "paper" and e["action"] in ("buy", "sell") and e["timestamp"].startswith(today)
     )
+
+
+def round_trip_stats() -> dict:
+    """
+    The correct definition of the Milestone 5 go-live counter (see
+    README's go-live gate): an OPEN alone proves nothing — only a CLOSE
+    that realizes P&L against a prior open is a completed round-trip.
+    Entries-only counts are exactly the kind of statistically meaningless
+    number the go-live gate exists to rule out.
+
+    Counts every paper sell with a recorded realized_pnl (see
+    PaperBroker.sell()) — a sell with realized_pnl=None (no cost basis on
+    record, e.g. a pre-existing position from before cost-basis tracking
+    existed) is a real fill but not a countable round-trip, and is
+    excluded rather than treated as a zero.
+
+    Returns {count, total_realized_pnl, wins, losses}.
+    """
+    closes = [
+        e for e in read_all()
+        if e["mode"] == "paper" and e["action"] == "sell" and e.get("realized_pnl") is not None
+    ]
+    total = sum(e["realized_pnl"] for e in closes)
+    wins = sum(1 for e in closes if e["realized_pnl"] > 0)
+    losses = sum(1 for e in closes if e["realized_pnl"] <= 0)
+    return {
+        "count": len(closes),
+        "total_realized_pnl": round(total, 2),
+        "wins": wins,
+        "losses": losses,
+    }

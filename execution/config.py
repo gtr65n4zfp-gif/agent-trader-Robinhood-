@@ -80,4 +80,34 @@ MAX_SECTOR_PCT: float = 0.25
 MAX_TRADES_PER_DAY: int = 10
 MAX_DAILY_LOSS_PCT: float = 0.05
 
+# Exit thresholds (agents/exits.py) — policy choices, not derived from
+# data, same caveat as MIN_VOL_SCALAR above: reasonable starting points,
+# not yet backtested against this project's own track record (that needs
+# Milestone 4's history to exist first). Unlike the risk breakers, these
+# apply to CLOSING a position, not opening one — per the design, exits
+# are never blocked by the exposure-reducing breakers (drawdown/sector/
+# daily-loss), so a position must always be closeable.
+STOP_LOSS_PCT: float = 0.08     # close if price falls this far below average entry price
+TAKE_PROFIT_PCT: float = 0.15   # close if price rises this far above average entry price
+
+# Conviction-drop threshold: if a fresh Judge re-evaluation of a held
+# symbol no longer supports holding it (action isn't "buy", or its
+# confidence has fallen below this), close regardless of price — the
+# thesis that justified opening the position no longer holds. This reuses
+# agents.judge.CONFIDENCE_THRESHOLD's scale (0-1) but is a separate,
+# independently-tunable number: entry and exit conviction bars don't have
+# to be the same value just because they're both "confidence."
+CONVICTION_DROP_THRESHOLD: float = 0.5
+
+# Fill modeling: a real order never fills at the exact quoted price —
+# slippage from the bid/ask spread, and (for some brokers) a commission.
+# Applying a small, deliberate haircut here keeps paper P&L honest rather
+# than assuming impossible instant, costless fills. This is a blunt,
+# symmetric approximation (same bps against the trader on every fill, buy
+# or sell) — not a real market-impact model, and not calibrated against
+# data the way TARGET_DAILY_VOL_PCT is.
+SLIPPAGE_BPS: float = 5.0    # 5 basis points = 0.05% of price, against the trader on every fill
+FLAT_FEE_USD: float = 0.0    # Robinhood equities are commission-free; kept explicit rather than
+                              # silently assumed, in case a future broker/asset class isn't
+
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")

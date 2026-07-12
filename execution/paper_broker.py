@@ -22,10 +22,32 @@ class TradeError(Exception):
     """Raised when an order can't be placed (insufficient cash/shares, risk cap)."""
 
 
+def _fill_price(price: float, side: str) -> float:
+    """Apply slippage against the trader — a buy fills slightly above the
+    quoted price, a sell slightly below — per config.SLIPPAGE_BPS. Called
+    once per order; the resulting fill price (not the quoted price) is
+    what actually moves cash, cost basis, and realized P&L."""
+    slip = price * (config.SLIPPAGE_BPS / 10_000)
+    return price + slip if side == "buy" else price - slip
+
+
 class PaperBroker:
-    def __init__(self):
+    def __init__(self, portfolio_path: str | None = None):
+        """
+        portfolio_path: override the default shared state file
+        (logs/paper_portfolio.json). Almost nothing should pass this —
+        it exists so a demo/test script can run against an isolated
+        account instead of whatever state the shared paper account
+        happens to be in (e.g. an existing drawdown from unrelated
+        earlier trades), without touching real accumulated history.
+        trade_log is still shared regardless — those entries are real
+        paper-trading activity either way, and belong in the one audit
+        trail.
+        """
+        self._portfolio_path = portfolio_path or _PORTFOLIO_PATH
         self.cash: float = config.PAPER_STARTING_CASH
         self.positions: dict[str, float] = {}   # symbol -> shares
+        self.cost_basis: dict[str, float] = {}  # symbol -> average entry fill price
         self.peak_equity: float = config.PAPER_STARTING_CASH  # for the drawdown breaker
         self.day_date: str | None = None               # UTC "YYYY-MM-DD", for the daily breakers
         self.day_start_equity: float = config.PAPER_STARTING_CASH
@@ -33,22 +55,28 @@ class PaperBroker:
 
     # --- persistence -------------------------------------------------------
     def _load(self) -> None:
-        if os.path.exists(_PORTFOLIO_PATH):
-            with open(_PORTFOLIO_PATH) as f:
+        if os.path.exists(self._portfolio_path):
+            with open(self._portfolio_path) as f:
                 data = json.load(f)
             self.cash = data["cash"]
             self.positions = data["positions"]
+            # cost_basis is back-compat: a portfolio file saved before this
+            # field existed just loads as {} — those positions are simply
+            # unevaluable for price-based exits until traded again, not a
+            # crash. See agents/exits.py's run_exit_sweep().
+            self.cost_basis = data.get("cost_basis", {})
             self.peak_equity = data.get("peak_equity", config.PAPER_STARTING_CASH)
             self.day_date = data.get("day_date")
             self.day_start_equity = data.get("day_start_equity", config.PAPER_STARTING_CASH)
 
     def _save(self) -> None:
         os.makedirs(config.LOG_DIR, exist_ok=True)
-        with open(_PORTFOLIO_PATH, "w") as f:
+        with open(self._portfolio_path, "w") as f:
             json.dump(
                 {
                     "cash": self.cash,
                     "positions": self.positions,
+                    "cost_basis": self.cost_basis,
                     "peak_equity": self.peak_equity,
                     "day_date": self.day_date,
                     "day_start_equity": self.day_start_equity,
@@ -138,43 +166,68 @@ class PaperBroker:
         symbol = symbol.upper()
         if quantity <= 0:
             raise TradeError("Quantity must be positive.")
-        self._check_risk(symbol, "buy", quantity, price, prices, atr_pct, sector_map)
+        fill = _fill_price(price, "buy")
+        self._check_risk(symbol, "buy", quantity, fill, prices, atr_pct, sector_map)
 
-        cost = quantity * price
+        cost = quantity * fill + config.FLAT_FEE_USD
         if cost > self.cash:
             raise TradeError(f"Not enough cash: need ${cost:,.2f}, have ${self.cash:,.2f}.")
 
         self.cash -= cost
-        self.positions[symbol] = self.positions.get(symbol, 0) + quantity
+        held_before = self.positions.get(symbol, 0)
+        basis_before = self.cost_basis.get(symbol, 0.0)
+        held_after = held_before + quantity
+        # Weighted-average cost basis across however many buys built this
+        # position — the fill price (post-slippage), not the quoted price,
+        # since that's what was actually paid.
+        self.cost_basis[symbol] = (held_before * basis_before + quantity * fill) / held_after
+        self.positions[symbol] = held_after
         self._save()
-        return trade_log.record("buy", symbol, quantity, price, paper=True, reason=reason,
-                                extra={"cost": cost, "cash_after": self.cash})
+        return trade_log.record("buy", symbol, quantity, fill, paper=True, reason=reason,
+                                extra={
+                                    "quoted_price": price, "cost": cost, "cash_after": self.cash,
+                                    "cost_basis_after": round(self.cost_basis[symbol], 4),
+                                })
 
     def sell(self, symbol: str, quantity: float, price: float, reason: str = "",
              prices: dict[str, float] | None = None) -> dict:
         """See buy() for `prices`. Note: the vetoer's position-concentration
         check and drawdown breaker never block a sell (selling only reduces
         exposure), but its per-trade dollar cap still applies — a single sell
-        larger than MAX_TRADE_USD is blocked same as a buy. That's fine for
-        manually reasoned trades (split it into two calls); it'll need
-        revisiting once automated stop-loss/exit logic exists, so a real exit
-        can't get stuck unable to close a position that grew past the cap."""
+        larger than MAX_TRADE_USD is blocked same as a buy. For manually
+        reasoned trades, split it into two calls; agents/exits.py's
+        close_position() does this automatically for the exit engine, so a
+        real exit can't get stuck unable to close a position that grew past
+        the cap.
+
+        realized_pnl in the returned record is (fill price - cost basis) *
+        quantity, net of this sell's slippage/fee — None if the position has
+        no cost basis on record (e.g. a portfolio file saved before that
+        field existed; see PaperBroker._load())."""
         symbol = symbol.upper()
         held = self.positions.get(symbol, 0)
         if quantity <= 0:
             raise TradeError("Quantity must be positive.")
         if quantity > held:
             raise TradeError(f"Can't sell {quantity} {symbol}; only hold {held}.")
-        self._check_risk(symbol, "sell", quantity, price, prices, atr_pct=None)
+        fill = _fill_price(price, "sell")
+        self._check_risk(symbol, "sell", quantity, fill, prices, atr_pct=None)
 
-        proceeds = quantity * price
+        proceeds = quantity * fill - config.FLAT_FEE_USD
+        entry_price = self.cost_basis.get(symbol)
+        realized_pnl = round(proceeds - quantity * entry_price, 2) if entry_price is not None else None
+
         self.cash += proceeds
         self.positions[symbol] = held - quantity
         if self.positions[symbol] == 0:
             del self.positions[symbol]
+            self.cost_basis.pop(symbol, None)
         self._save()
-        return trade_log.record("sell", symbol, quantity, price, paper=True, reason=reason,
-                                extra={"proceeds": proceeds, "cash_after": self.cash})
+        return trade_log.record("sell", symbol, quantity, fill, paper=True, reason=reason,
+                                extra={
+                                    "quoted_price": price, "proceeds": proceeds, "cash_after": self.cash,
+                                    "entry_price": entry_price, "realized_pnl": realized_pnl,
+                                })
 
     # --- account view ------------------------------------------------------
     def account(self, prices: dict[str, float] | None = None) -> dict:
