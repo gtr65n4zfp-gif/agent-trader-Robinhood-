@@ -104,6 +104,37 @@ def get_atr_pct(symbol: str, price: float, raw_atr: dict) -> float:
     return float(atr_value) / price
 
 
+# --- Sector (for the risk vetoer's concentration check) -------------------
+
+
+def get_sectors(symbols: list[str], raw_fundamentals: dict) -> dict[str, str]:
+    """
+    Parse a get_equity_fundamentals MCP tool response into {symbol: sector}.
+
+    raw_fundamentals is the unmodified JSON returned by calling the MCP tool
+    get_equity_fundamentals with `symbols`. Sector strings come straight from
+    Robinhood's own classification (e.g. "Electronic Technology") — they're
+    not normalized against any other taxonomy.
+    """
+    results = raw_fundamentals.get("data", {}).get("results", [])
+    sectors: dict[str, str] = {}
+    for result in results:
+        sym = result.get("symbol")
+        sector = result.get("sector")
+        if sym and sector:
+            sectors[sym] = sector
+
+    missing = [s.upper() for s in symbols if s.upper() not in sectors]
+    if missing:
+        raise RobinhoodDataError(f"No sector returned for: {', '.join(missing)}")
+    return sectors
+
+
+def get_sector(symbol: str, raw_fundamentals: dict) -> str:
+    """Parse a single symbol's sector out of a get_equity_fundamentals response."""
+    return get_sectors([symbol], raw_fundamentals)[symbol.upper()]
+
+
 # --- Real account snapshot ----------------------------------------------
 
 

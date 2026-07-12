@@ -5,9 +5,10 @@ Pure veto power: given a proposed trade and the current account state, checks
 the proposal against the risk caps in execution/config.py — a flat per-trade
 dollar cap (MAX_TRADE_USD), a volatility-scaled position-concentration cap
 (MAX_POSITION_PCT, scaled by TARGET_DAILY_VOL_PCT/MIN_VOL_SCALAR when a
-volatility reading is supplied), and a portfolio-wide drawdown circuit
-breaker (MAX_DRAWDOWN_PCT). It never originates a trade — only approves or
-rejects one that already exists elsewhere (a human today, eventually the
+volatility reading is supplied), a sector-concentration cap (MAX_SECTOR_PCT,
+when sector data is supplied), and a portfolio-wide drawdown circuit breaker
+(MAX_DRAWDOWN_PCT). It never originates a trade — only approves or rejects
+one that already exists elsewhere (a human today, eventually the
 Fundamentals/Technicals seats + Judge). No LLM and no judgment call: every
 check here is arithmetic against fixed limits, which is why this seat was
 built first.
@@ -38,6 +39,8 @@ def review(
     account: dict,
     atr_pct: float | None = None,
     portfolio_drawdown_pct: float | None = None,
+    sector: str | None = None,
+    sector_pct: float | None = None,
 ) -> dict:
     """
     Check a proposed trade against the risk caps.
@@ -51,6 +54,11 @@ def review(
     portfolio_drawdown_pct: how far current total_value sits below the
     account's peak equity (e.g. 0.12 = 12% drawdown). Optional — omit to
     skip the drawdown circuit breaker entirely.
+    sector / sector_pct: this symbol's sector, and what fraction of the
+    account this trade would put into that sector *in total* (this symbol
+    plus every other held position sharing it) — the caller computes the
+    aggregate, this seat just checks it against MAX_SECTOR_PCT. Optional —
+    omit either to skip the sector-concentration check.
 
     Returns a decision dict with `approved`, a human-readable `reason`, the
     individual `checks`, and the numbers behind them in `detail`.
@@ -85,6 +93,15 @@ def review(
             checks["within_drawdown_limit"] = portfolio_drawdown_pct < config.MAX_DRAWDOWN_PCT
             detail["portfolio_drawdown_pct"] = round(portfolio_drawdown_pct, 4)
             detail["max_drawdown_pct"] = config.MAX_DRAWDOWN_PCT
+
+        # Sector cap: catches concentration that per-symbol caps can't see —
+        # several correlated names each individually under MAX_POSITION_PCT
+        # while the portfolio is still one big correlated bet.
+        if sector is not None and sector_pct is not None:
+            checks["within_sector_cap"] = sector_pct <= config.MAX_SECTOR_PCT
+            detail["sector"] = sector
+            detail["projected_sector_pct"] = round(sector_pct, 4)
+            detail["max_sector_pct"] = config.MAX_SECTOR_PCT
     else:
         # Selling only reduces exposure — concentration cap and the
         # drawdown breaker don't apply; capital preservation always wins.
@@ -141,3 +158,10 @@ if __name__ == "__main__":
 
     print("\nSame 20% drawdown, but a sell is never blocked by it:")
     print(review("AAPL", "sell", 4, 200.0, demo_account, portfolio_drawdown_pct=0.20))
+
+    print("\nFive correlated tech names, each individually under the position cap,")
+    print("but this buy would push combined tech exposure to 32% (should fail):")
+    print(review("NVDA", "buy", 1, 300.0, demo_account, sector="Technology", sector_pct=0.32))
+
+    print("\nSame trade, but tech exposure would only reach 18% (should pass):")
+    print(review("NVDA", "buy", 1, 300.0, demo_account, sector="Technology", sector_pct=0.18))

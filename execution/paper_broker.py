@@ -47,11 +47,13 @@ class PaperBroker:
 
     # --- risk gate -----------------------------------------------------------
     def _check_risk(self, symbol: str, side: str, quantity: float, price: float,
-                     prices: dict[str, float] | None, atr_pct: float | None) -> None:
+                     prices: dict[str, float] | None, atr_pct: float | None,
+                     sector_map: dict[str, str] | None = None) -> None:
         """Run the risk vetoer; raise TradeError (and log the veto) if it blocks
         the trade. Nothing can buy or sell through this broker without clearing
         this — the gate lives here, not in whichever script happens to call in."""
-        account = self.account({**(prices or {}), symbol: price})
+        all_prices = {**(prices or {}), symbol: price}
+        account = self.account(all_prices)
 
         if account["total_value"] > self.peak_equity:
             self.peak_equity = account["total_value"]
@@ -61,9 +63,29 @@ class PaperBroker:
             if self.peak_equity > 0 else 0.0
         )
 
+        # Sector exposure: this symbol's sector plus every OTHER held
+        # position sharing it, valued at whatever prices the caller gave us.
+        # A symbol missing from sector_map (or an unpriced holding) is
+        # silently excluded from the sum rather than failing the check —
+        # this is a best-effort aggregate, not a guaranteed-complete one.
+        sector = None
+        sector_pct = None
+        if side == "buy" and sector_map:
+            sector = sector_map.get(symbol)
+            if sector:
+                sector_value = sum(
+                    shares * all_prices.get(sym, 0)
+                    for sym, shares in self.positions.items()
+                    if sector_map.get(sym) == sector
+                )
+                total_value = account["total_value"]
+                projected_sector_value = sector_value + (quantity * price)
+                sector_pct = projected_sector_value / total_value if total_value > 0 else float("inf")
+
         decision = risk_vetoer.review(
             symbol, side, quantity, price, account,
             atr_pct=atr_pct, portfolio_drawdown_pct=drawdown_pct,
+            sector=sector, sector_pct=sector_pct,
         )
         if not decision["approved"]:
             trade_log.record(
@@ -74,17 +96,22 @@ class PaperBroker:
 
     # --- orders ------------------------------------------------------------
     def buy(self, symbol: str, quantity: float, price: float, reason: str = "",
-            prices: dict[str, float] | None = None, atr_pct: float | None = None) -> dict:
+            prices: dict[str, float] | None = None, atr_pct: float | None = None,
+            sector_map: dict[str, str] | None = None) -> dict:
         """prices: optional {symbol: price} for every other held position, so
         the risk vetoer can value the whole account accurately. Omit and only
         this symbol's position is valued precisely; others fall back to 0.
         atr_pct: optional volatility reading (see agents.risk_vetoer) that
         scales down the position cap for volatile names — from
-        execution.robinhood.get_atr_pct(). Omit to use the flat cap."""
+        execution.robinhood.get_atr_pct(). Omit to use the flat cap.
+        sector_map: optional {symbol: sector} covering this symbol and every
+        other held position, from execution.robinhood.get_sectors() — lets
+        the vetoer catch sector-level concentration across symbols. Omit to
+        skip the sector-concentration check entirely."""
         symbol = symbol.upper()
         if quantity <= 0:
             raise TradeError("Quantity must be positive.")
-        self._check_risk(symbol, "buy", quantity, price, prices, atr_pct)
+        self._check_risk(symbol, "buy", quantity, price, prices, atr_pct, sector_map)
 
         cost = quantity * price
         if cost > self.cash:

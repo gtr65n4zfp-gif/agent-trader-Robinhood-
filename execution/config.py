@@ -56,4 +56,11 @@ MIN_VOL_SCALAR: float = 0.25
 # capital preservation always wins over a fixed cap.
 MAX_DRAWDOWN_PCT: float = 0.15
 
+# Sector concentration cap: MAX_POSITION_PCT limits any one symbol, but says
+# nothing about five correlated names in the same sector each individually
+# clearing that bar while the portfolio is still one big correlated bet.
+# This caps total exposure to any single sector, independent of how it's
+# split across symbols.
+MAX_SECTOR_PCT: float = 0.25
+
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
