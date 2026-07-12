@@ -92,10 +92,36 @@ only after it proves itself.
             and validates a genuinely distinct, longer-period EMA — proven
             live with a constructed case where the two signals actually
             disagree on trend direction from the same price
-      - [ ] Automated/scheduled cadence — every council run above is still
-            triggered manually; last piece before a real track record
+      - [x] Automation entrypoint — `automation/run_pass.py`: exit sweep
+            first, then entries, across a watchlist; fail-safe by design
+            (`assert_paper_mode()` first, market-hours guard, per-symbol
+            data sanity check that skips bad/stale data rather than
+            trading on it); ships `AUTOMATION_DRY_RUN=True` — every
+            decision is logged with its regime state, nothing executes
+            until deliberately armed (`execution/config.py`,
+            `agents/AUTOMATION_DESIGN.md`)
+      - [x] End-to-end proof: exit-sweep-then-entries ordering, dry-run
+            logging with zero execution, regime tagging on every record,
+            and both fail-safes (market-hours no-op, per-symbol bad-data
+            skip) all verified deterministically
+            (`automation/demo_run_pass.py`)
+      - [ ] Wire `run_pass.py` to an actual live cadence — blocked on
+            infrastructure outside this codebase, not the design: no git
+            remote to give a cloud routine, and Robinhood isn't available
+            as a claude.ai MCP connector for cloud routines yet (the
+            authenticated session this whole project uses is local/
+            interactive-only). Last piece before a real track record.
 - [ ] Milestone 4: Backtest / track paper P&L over time
 - [ ] Milestone 5: Real-money pilot — blocked until the go-live gate below is met
+- [ ] Milestone 6: Universe expansion — a screening/universe-selection funnel so
+      the council can look at a whole market instead of a hand-picked watchlist.
+      Deliberately deferred: the current one-symbol-at-a-time, agent-mediated MCP
+      path can't scan thousands of tickers, so this needs a *bulk, programmatic*
+      market-data source (not the interactive MCP) feeding a cheap quant screen
+      that narrows the universe to a shortlist the existing council then analyzes.
+      Not to be built until the council has proven an edge on the watchlist —
+      widening intake before the engine is validated is premature. The crux
+      decision is the bulk data source; design before code.
 
 ## Go-live gate (Milestone 5)
 

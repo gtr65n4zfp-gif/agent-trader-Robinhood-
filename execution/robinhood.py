@@ -20,6 +20,8 @@ executes anything.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from . import config
 
 
@@ -73,6 +75,34 @@ def get_quote(symbol: str, raw_quote: dict) -> float:
     raw_quote is the MCP tool response for a call with symbols=[symbol].
     """
     return get_quotes([symbol], raw_quote)[symbol.upper()]
+
+
+def get_quote_age_minutes(symbol: str, raw_quote: dict, now: datetime | None = None) -> float:
+    """
+    How many minutes old a get_quote() price actually is, per its own
+    venue timestamp — a quote can parse successfully and still be stale
+    (the feed hasn't ticked, or it's a market holiday and the "latest"
+    trade is from days earlier). Picks whichever of venue_last_trade_time
+    / venue_last_non_reg_trade_time is more recent, the same preference
+    _extract_price() uses for the price itself. Used by
+    execution.config.MAX_QUOTE_AGE_MINUTES — automation's per-symbol
+    fail-safe staleness check (see automation/run_pass.py).
+
+    raw_quote is the same MCP response get_quote() takes. now: for
+    testing; defaults to the current UTC time.
+    """
+    results = raw_quote.get("data", {}).get("results", [])
+    quote = next((r.get("quote", {}) for r in results if r.get("quote", {}).get("symbol") == symbol.upper()), None)
+    if quote is None:
+        raise RobinhoodDataError(f"{symbol}: no quote in response to check freshness against.")
+
+    timestamps = [t for t in (quote.get("venue_last_trade_time"), quote.get("venue_last_non_reg_trade_time")) if t]
+    if not timestamps:
+        raise RobinhoodDataError(f"{symbol}: quote has no venue timestamp to check freshness against.")
+
+    latest = max(datetime.fromisoformat(t) for t in timestamps)
+    now = now or datetime.now(timezone.utc)
+    return (now - latest).total_seconds() / 60.0
 
 
 # --- Technical indicators (ATR for the risk vetoer, RSI/EMA for the -----

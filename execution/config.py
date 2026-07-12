@@ -10,6 +10,8 @@ can't flip it just by editing a stray boolean somewhere.
 """
 
 import os
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 # --- The switch ------------------------------------------------------------
 # Real trading is only enabled when the env var is set to this exact phrase.
@@ -139,5 +141,62 @@ REGIME_TREND_BAND_PCT: float = 0.02   # within 2% of EMA = sideways/ranging
 # trend read appropriate to classifying the regime rather than immediate
 # momentum.
 REGIME_EMA_LOOKBACK_DAYS: int = 20
+
+# --- Automation (automation/run_pass.py) ------------------------------------
+# The watchlist a scheduled pass evaluates every cadence. Adjustable — this
+# is a starting set of liquid large-caps spanning sectors (tech, financials,
+# healthcare, consumer staples, energy, industrials), not a permanent choice.
+# See agents/AUTOMATION_DESIGN.md.
+WATCHLIST: list[str] = ["AAPL", "MSFT", "GOOGL", "JPM", "JNJ", "WMT", "XOM", "CAT"]
+
+# Intended cadence: once per US trading day, mid-morning ET (~10:00) —
+# comfortably inside regular hours so market_is_open() below reads True on
+# an on-time wake. Set in the scheduled routine's own cron expression, not
+# enforced here.
+
+# US equity regular trading hours (9:30-16:00 America/New_York), weekdays
+# only. Deliberately does NOT know about market holidays — no holiday
+# calendar dependency (see agents/AUTOMATION_DESIGN.md). A holiday still
+# reads as "open" here; MAX_QUOTE_AGE_MINUTES below is the fallback that
+# catches it in practice, since a holiday's "latest" quote is from the
+# prior session.
+MARKET_OPEN_HOUR, MARKET_OPEN_MINUTE = 9, 30
+MARKET_CLOSE_HOUR, MARKET_CLOSE_MINUTE = 16, 0
+
+
+def market_is_open(now: datetime | None = None) -> bool:
+    """
+    The MARKET-HOURS GUARD for automation/run_pass.py: US equity regular
+    trading hours on a weekday. Outside this window a pass is a logged
+    no-op — quotes are stale when markets are closed, and a stale price
+    must never drive a trade. now: for testing; defaults to the current
+    time.
+    """
+    now = (now or datetime.now(ZoneInfo("America/New_York"))).astimezone(ZoneInfo("America/New_York"))
+    if now.weekday() >= 5:  # Saturday=5, Sunday=6
+        return False
+    open_time = now.replace(hour=MARKET_OPEN_HOUR, minute=MARKET_OPEN_MINUTE, second=0, microsecond=0)
+    close_time = now.replace(hour=MARKET_CLOSE_HOUR, minute=MARKET_CLOSE_MINUTE, second=0, microsecond=0)
+    return open_time <= now <= close_time
+
+
+# How old a live quote's own venue timestamp can be before automation
+# treats it as stale and skips that symbol for the pass — the core of the
+# FAIL-SAFE rule: bad or missing data must halt that symbol, never feed
+# the seats or PaperBroker. Generous relative to the once-daily cadence
+# above (a normal on-time fetch is seconds old); this exists to catch
+# genuinely wrong data, like a market-holiday quote from days earlier.
+MAX_QUOTE_AGE_MINUTES: float = 30.0
+
+# Arm/disarm switch for automation execution. True (shipped default):
+# every pass still runs the full pipeline and logs every decision
+# (action="dry_run_entry"/"dry_run_exit"), but PaperBroker.buy()/.sell()
+# is never called — nothing is actually placed. False: real paper orders
+# execute, still gated by every existing breaker (risk vetoer, drawdown,
+# sector, daily caps — automation adds no path around any of them).
+# Flip deliberately, one line, only when actually ready:
+#     config.AUTOMATION_DRY_RUN = False
+# Never the default; never flipped as a side effect of something else.
+AUTOMATION_DRY_RUN: bool = True
 
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
