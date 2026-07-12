@@ -37,11 +37,34 @@ only after it proves itself.
             triggered manually with an explicit reason
       - [ ] Real order placement stays behind `assert_paper_mode()` and the
             `AGENT_TRADER_LIVE` unlock phrase until profitability is proven
-- [~] Milestone 2: SEC research agent
+- [x] Milestone 2: SEC research agent
       - [x] Data client: ticker->CIK, recent filings, financial facts (`research/sec_client.py`)
-      - [ ] Handle inconsistent XBRL tags (e.g. revenue reported under different tags)
-      - [ ] Report layer: use Claude to turn a filing into a plain-English + structured report
-- [ ] Milestone 3: The council (trade review agents) — see `agents/COUNCIL_DESIGN.md` for the blueprint (docs only, no code yet)
+      - [x] Handle inconsistent XBRL tags — tag-candidate fallback + a proper
+            YoY (not just sequential) comparison (`agents/fundamentals_seat.py`)
+      - [x] Report layer: plain-English + structured company report, agent-
+            authored from a structured brief (`research/report.py`)
+- [~] Milestone 3: The council (trade review agents) — see `agents/COUNCIL_DESIGN.md` for the blueprint
+      - [x] Risk vetoer seat — trade-size, volatility-scaled position, sector,
+            drawdown, and daily-loss/frequency caps; structurally enforced
+            inside `PaperBroker` (`agents/risk_vetoer.py`)
+      - [x] Fundamentals seat — SEC-only structured brief, judgment stays
+            agent-formed by design (`agents/fundamentals_seat.py`)
+      - [x] Technicals seat — rule-based price/EMA/RSI stance, domain-isolated
+            from fundamentals (`agents/technicals.py`)
+      - [x] Judge — conjunctive gate (no-trade-by-default) combining seat
+            outputs into buy/sell/hold; never executes directly
+            (`agents/judge.py`)
+      - [x] Ablation/baseline hook — a non-isolated single-model shadow
+            decision logged alongside every real one, never acted on
+      - [x] End-to-end proof: Fundamentals + Technicals -> Judge -> PaperBroker
+            (Risk vetoer still the final word) -> trade_log, verified live
+            against real AAPL data for both a buy attempt (correctly vetoed
+            on an already-over-concentrated account) and a hold
+            (`agents/demo_council.py`)
+      - [ ] Regime/volatility filter (forced sit-out in choppy conditions)
+      - [ ] Exit logic (stop-loss / take-profit / regime-change / conviction-drop)
+      - [ ] Automated/scheduled cadence — every council run above is still
+            triggered manually
 - [ ] Milestone 4: Backtest / track paper P&L over time
 - [ ] Milestone 5: Real-money pilot — blocked until the go-live gate below is met
 

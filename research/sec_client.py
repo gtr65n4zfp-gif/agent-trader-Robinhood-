@@ -12,6 +12,7 @@ generic agents.
 Docs: https://www.sec.gov/os/webmaster-faq#developers
 """
 
+import json
 import os
 import time
 import requests
@@ -43,6 +44,45 @@ def _get(url: str) -> requests.Response:
     return resp
 
 
+# --- On-disk cache -----------------------------------------------------
+# Filings/financials don't change intraday, so a run that calls the
+# Fundamentals seat repeatedly for the same symbol (e.g. the Judge across
+# several council passes in one session) doesn't need to re-hit live
+# EDGAR every time. Keyed by URL, one JSON file, gitignored (logs/*.json).
+# Deliberately NOT applied to TICKER_MAP_URL — that response is large and
+# already has its own in-memory _ticker_map_cache; this is for the
+# per-symbol submissions/concept calls that actually repeat.
+_CACHE_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs", "sec_cache.json")
+_CACHE_TTL_SECONDS = 3600
+
+
+def _cache_load() -> dict:
+    if os.path.exists(_CACHE_PATH):
+        with open(_CACHE_PATH) as f:
+            return json.load(f)
+    return {}
+
+
+def _cache_save(cache: dict) -> None:
+    os.makedirs(os.path.dirname(_CACHE_PATH), exist_ok=True)
+    with open(_CACHE_PATH, "w") as f:
+        json.dump(cache, f)
+
+
+def _get_cached(url: str) -> dict:
+    """Like _get(url).json(), but reuses a same-URL response from disk if
+    it's younger than _CACHE_TTL_SECONDS."""
+    cache = _cache_load()
+    hit = cache.get(url)
+    if hit and time.time() - hit["cached_at"] < _CACHE_TTL_SECONDS:
+        return hit["data"]
+
+    data = _get(url).json()
+    cache[url] = {"data": data, "cached_at": time.time()}
+    _cache_save(cache)
+    return data
+
+
 # --- Ticker -> CIK ---------------------------------------------------------
 _ticker_map_cache: dict | None = None
 
@@ -70,7 +110,7 @@ def get_company_info(cik: str) -> dict:
     Basic company metadata: name and SIC industry classification, from the
     same submissions endpoint get_recent_filings() reads.
     """
-    data = _get(SUBMISSIONS_URL.format(cik=cik)).json()
+    data = _get_cached(SUBMISSIONS_URL.format(cik=cik))
     return {
         "name": data.get("name"),
         "sic": data.get("sic"),
@@ -88,7 +128,7 @@ def get_recent_filings(cik: str, forms: list[str] | None = None, limit: int = 10
     forms: optional filter, e.g. ['10-K', '10-Q', '8-K']. None = all forms.
     Each item includes form type, filing date, and a direct URL to the document.
     """
-    data = _get(SUBMISSIONS_URL.format(cik=cik)).json()
+    data = _get_cached(SUBMISSIONS_URL.format(cik=cik))
     recent = data["filings"]["recent"]
     cik_int = int(cik)  # URLs use the un-padded CIK
 
@@ -124,7 +164,7 @@ def get_concept(cik: str, tag: str, unit: str = "USD") -> list[dict]:
     'CashAndCashEquivalentsAtCarryingValue'.
     Returns a list of {value, end, form, fiscal_year, fiscal_period} newest-last.
     """
-    data = _get(CONCEPT_URL.format(cik=cik, tag=tag)).json()
+    data = _get_cached(CONCEPT_URL.format(cik=cik, tag=tag))
     points = []
     for p in data.get("units", {}).get(unit, []):
         points.append(

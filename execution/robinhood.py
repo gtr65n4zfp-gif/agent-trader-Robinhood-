@@ -73,7 +73,27 @@ def get_quote(symbol: str, raw_quote: dict) -> float:
     return get_quotes([symbol], raw_quote)[symbol.upper()]
 
 
-# --- Volatility (for the risk vetoer's position sizing) ------------------
+# --- Technical indicators (ATR for the risk vetoer, RSI/EMA for the -----
+# --- Technicals seat) ------------------------------------------------------
+
+
+def _extract_indicator_value(symbol: str, indicator_type: str, raw_indicator: dict) -> float:
+    """Pull the latest value for one indicator type out of a
+    get_equity_technical_indicators response. Shared by every indicator
+    parser below — they all read the same shape, just different `type`."""
+    indicators = raw_indicator.get("data", {}).get("indicators", [])
+    match = next((i for i in indicators if i.get("type") == indicator_type), None)
+    if match is None:
+        raise RobinhoodDataError(f"{symbol}: no {indicator_type} indicator in response.")
+
+    series = match.get("series", [])
+    if not series:
+        raise RobinhoodDataError(f"{symbol}: {indicator_type} series is empty.")
+
+    value = series[-1].get("value")
+    if value is None:
+        raise RobinhoodDataError(f"{symbol}: latest {indicator_type} bar has no value.")
+    return float(value)
 
 
 def get_atr_pct(symbol: str, price: float, raw_atr: dict) -> float:
@@ -86,22 +106,32 @@ def get_atr_pct(symbol: str, price: float, raw_atr: dict) -> float:
     interval="day" (or similar), output="latest". price is the symbol's
     current price, used only to convert the dollar ATR into a ratio.
     """
-    indicators = raw_atr.get("data", {}).get("indicators", [])
-    atr_indicator = next((i for i in indicators if i.get("type") == "atr"), None)
-    if atr_indicator is None:
-        raise RobinhoodDataError(f"{symbol}: no ATR indicator in response.")
-
-    series = atr_indicator.get("series", [])
-    if not series:
-        raise RobinhoodDataError(f"{symbol}: ATR series is empty.")
-
-    atr_value = series[-1].get("value")
-    if atr_value is None:
-        raise RobinhoodDataError(f"{symbol}: latest ATR bar has no value.")
     if price <= 0:
         raise RobinhoodDataError(f"{symbol}: price must be positive to compute ATR%.")
+    return _extract_indicator_value(symbol, "atr", raw_atr) / price
 
-    return float(atr_value) / price
+
+def get_rsi(symbol: str, raw_rsi: dict) -> float:
+    """
+    Parse a get_equity_technical_indicators (type="rsi") response into the
+    latest RSI reading (0-100) — used by agents.technicals for momentum.
+
+    raw_rsi is the MCP tool response for a call with symbol=symbol,
+    type="rsi", interval="day" (or similar), output="latest".
+    """
+    return _extract_indicator_value(symbol, "rsi", raw_rsi)
+
+
+def get_ema(symbol: str, raw_ema: dict) -> float:
+    """
+    Parse a get_equity_technical_indicators (type="ema") response into the
+    latest EMA value (price-scale) — used by agents.technicals to gauge
+    trend direction (price vs. its EMA).
+
+    raw_ema is the MCP tool response for a call with symbol=symbol,
+    type="ema", interval="day" (or similar), output="latest".
+    """
+    return _extract_indicator_value(symbol, "ema", raw_ema)
 
 
 # --- Sector (for the risk vetoer's concentration check) -------------------

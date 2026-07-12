@@ -140,6 +140,38 @@ def build_brief(ticker: str, filing_forms: list[str] | None = None) -> dict:
     }
 
 
+def form_verdict(ticker: str, stance: str, confidence: float, reasons: list[str]) -> dict:
+    """
+    Package a Fundamentals judgment into the same {stance, confidence,
+    reasons} shape agents.technicals.build_view() returns, so
+    agents.judge can treat every seat's output uniformly. This function
+    does NOT form the judgment — per this module's docstring, that's
+    still the calling agent's job, reasoning over build_brief()'s output.
+    It only validates and repackages it, which matters for isolation: the
+    Judge only ever sees this — never the raw brief — so it can't
+    accidentally weigh a filing detail the Fundamentals seat didn't
+    actually surface as part of its verdict.
+
+    stance: "bullish" | "bearish" | "neutral". Here that means the
+    business's trajectory looks like it's strengthening/weakening — NOT
+    "cheap vs expensive" (this seat has no price data to judge that; see
+    the module docstring).
+    confidence: 0-1.
+    """
+    stance = stance.lower()
+    if stance not in ("bullish", "bearish", "neutral"):
+        raise ValueError(f"stance must be bullish/bearish/neutral, got {stance!r}")
+    if not 0.0 <= confidence <= 1.0:
+        raise ValueError(f"confidence must be in [0, 1], got {confidence!r}")
+    return {
+        "seat": "fundamentals",
+        "symbol": ticker.upper().strip(),
+        "stance": stance,
+        "confidence": round(confidence, 4),
+        "reasons": list(reasons),
+    }
+
+
 if __name__ == "__main__":
     ticker = sys.argv[1] if len(sys.argv) > 1 else "AAPL"
     brief = build_brief(ticker)
