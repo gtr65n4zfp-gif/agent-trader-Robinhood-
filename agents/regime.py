@@ -25,9 +25,12 @@ an exit, or increase a position size — a tradeable=True regime result
 means "no objection," never "go."
 
 regime_stance() takes already-parsed inputs (from execution/robinhood.py's
-get_quote/get_ema/get_atr_pct — this module does not call any MCP tool or
-fetch anything itself) and reduces them to a compact structured view:
-{state, volatility, trend, tradeable, reason}.
+get_quote/get_regime_ema/get_atr_pct — this module does not call any MCP
+tool or fetch anything itself) and reduces them to a compact structured
+view: {state, volatility, trend, tradeable, reason}. get_regime_ema() is a
+genuinely distinct reading from agents.technicals's get_ema() — a longer
+lookback, validated at the data layer (execution.config.REGIME_EMA_LOOKBACK_DAYS)
+so the two can never be silently fed the same EMA and mechanically agree.
 """
 
 from execution import config
@@ -62,9 +65,12 @@ def regime_stance(symbol: str, price: float, ema: float, atr_pct: float) -> dict
     named state with a tradeable flag.
 
     price, ema, atr_pct: already-parsed inputs — see execution.robinhood's
-    get_quote/get_ema/get_atr_pct. ema should come from a longer-period
-    reading than agents.technicals uses (see config.REGIME_EMA_LOOKBACK_DAYS)
-    for a smoother, less noisy trend read.
+    get_quote/get_regime_ema/get_atr_pct. ema MUST come from
+    get_regime_ema(), not get_ema() — a genuinely distinct, longer-period
+    reading from what agents.technicals uses (config.REGIME_EMA_LOOKBACK_DAYS),
+    validated at the data layer so the two can't be silently swapped. This
+    is what lets regime and Technicals actually disagree on trend instead
+    of mechanically agreeing because they were fed the same number.
 
     Named states:
         low_vol_ranging  — low vol + sideways: the specific condition this

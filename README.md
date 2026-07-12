@@ -85,6 +85,13 @@ only after it proves itself.
             bullish (and didn't move the round-trip counter), and a regime
             flip closed a held position via `regime_change` — all
             deterministic, verified live (`agents/demo_regime.py`)
+      - [x] Fixed: regime and Technicals were deriving trend from the same
+            EMA reading, making `REGIME_EMA_LOOKBACK_DAYS` a setting that
+            did nothing and silently breaking domain isolation between the
+            two. `execution/robinhood.py`'s `get_regime_ema()` now fetches
+            and validates a genuinely distinct, longer-period EMA — proven
+            live with a constructed case where the two signals actually
+            disagree on trend direction from the same price
       - [ ] Automated/scheduled cadence — every council run above is still
             triggered manually; last piece before a real track record
 - [ ] Milestone 4: Backtest / track paper P&L over time

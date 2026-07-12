@@ -20,6 +20,8 @@ executes anything.
 
 from __future__ import annotations
 
+from . import config
+
 
 class RobinhoodDataError(Exception):
     """Raised when an MCP response is missing or malformed data we need."""
@@ -77,14 +79,30 @@ def get_quote(symbol: str, raw_quote: dict) -> float:
 # --- Technicals seat) ------------------------------------------------------
 
 
-def _extract_indicator_value(symbol: str, indicator_type: str, raw_indicator: dict) -> float:
+def _extract_indicator_value(
+    symbol: str, indicator_type: str, raw_indicator: dict, expected_period: int | None = None
+) -> float:
     """Pull the latest value for one indicator type out of a
     get_equity_technical_indicators response. Shared by every indicator
-    parser below — they all read the same shape, just different `type`."""
+    parser below — they all read the same shape, just different `type`.
+
+    expected_period: if given, asserts the response's own reported
+    params.period matches — this is what makes get_regime_ema() and
+    get_ema() structurally unable to be swapped for each other. Passing
+    the wrong response raises here instead of silently computing a trend
+    off the wrong lookback (the bug this exists to prevent)."""
     indicators = raw_indicator.get("data", {}).get("indicators", [])
     match = next((i for i in indicators if i.get("type") == indicator_type), None)
     if match is None:
         raise RobinhoodDataError(f"{symbol}: no {indicator_type} indicator in response.")
+
+    if expected_period is not None:
+        actual_period = match.get("params", {}).get("period")
+        if actual_period != expected_period:
+            raise RobinhoodDataError(
+                f"{symbol}: expected {indicator_type} period={expected_period}, "
+                f"got period={actual_period!r} — wrong indicator response passed in."
+            )
 
     series = match.get("series", [])
     if not series:
@@ -125,13 +143,40 @@ def get_rsi(symbol: str, raw_rsi: dict) -> float:
 def get_ema(symbol: str, raw_ema: dict) -> float:
     """
     Parse a get_equity_technical_indicators (type="ema") response into the
-    latest EMA value (price-scale) — used by agents.technicals to gauge
-    trend direction (price vs. its EMA).
+    SHORT-period EMA value (price-scale) — used by agents.technicals to
+    gauge near-term trend direction (price vs. its EMA). Distinct from
+    get_regime_ema() below: Technicals isn't tied to one canonical period,
+    so no period is enforced here — whatever period the caller requested
+    is what's returned.
 
     raw_ema is the MCP tool response for a call with symbol=symbol,
     type="ema", interval="day" (or similar), output="latest".
     """
     return _extract_indicator_value(symbol, "ema", raw_ema)
+
+
+def get_regime_ema(symbol: str, raw_regime_ema: dict) -> float:
+    """
+    Parse a get_equity_technical_indicators (type="ema") response into the
+    REGIME-period EMA value — used by agents.regime to classify trend on a
+    slower, less noisy lookback than agents.technicals's short EMA (see
+    execution.config.REGIME_EMA_LOOKBACK_DAYS). This is a genuinely
+    distinct reading, not the same number reused: the response's own
+    reported period is validated against REGIME_EMA_LOOKBACK_DAYS, so
+    passing get_ema()'s short-period response here (or vice versa) raises
+    instead of silently deriving regime trend from the wrong lookback —
+    the two signals can now actually disagree, restoring the isolation
+    between Technicals and the regime filter.
+
+    raw_regime_ema is the MCP tool response for a call with symbol=symbol,
+    type="ema", period=config.REGIME_EMA_LOOKBACK_DAYS, interval="day".
+    A day-interval EMA needs several period-lengths of warm-up bars to be
+    accurate — request start_time at least ~3x REGIME_EMA_LOOKBACK_DAYS
+    of history back when building that call, not just enough for one bar.
+    """
+    return _extract_indicator_value(
+        symbol, "ema", raw_regime_ema, expected_period=config.REGIME_EMA_LOOKBACK_DAYS
+    )
 
 
 # --- Sector (for the risk vetoer's concentration check) -------------------

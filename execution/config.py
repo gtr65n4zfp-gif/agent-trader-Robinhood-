@@ -130,11 +130,14 @@ REGIME_HIGH_VOL_MULTIPLIER: float = 2.0  # ATR% above 2.0x the calibrated median
 # from data.
 REGIME_TREND_BAND_PCT: float = 0.02   # within 2% of EMA = sideways/ranging
 
-# Guidance, not an enforced constant (agents/regime.py takes an EMA value
-# already resolved by the caller — see execution/robinhood.py's
-# agent-mediated pattern — so this can't be checked in code): use a
-# longer-period EMA here than the Technicals seat's, for a smoother read
-# appropriate to classifying the regime rather than immediate momentum.
+# Enforced, not just guidance: execution/robinhood.py's get_regime_ema()
+# validates that the EMA response handed to it actually reports this
+# period, so the regime filter and agents.technicals's short EMA can never
+# be silently fed the same reading again — they're required to be genuinely
+# distinct lookbacks, the way domain isolation between them was always
+# supposed to work. A longer period here means a smoother, less noisy
+# trend read appropriate to classifying the regime rather than immediate
+# momentum.
 REGIME_EMA_LOOKBACK_DAYS: int = 20
 
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")

@@ -17,7 +17,17 @@ reading build_brief()'s output, not computed mechanically. Run it as:
 BUNDLE_JSON_PATH must contain:
     "quote":                  get_equity_quotes response for [symbol]
     "atr", "rsi", "ema":      get_equity_technical_indicators responses
-                               (type=atr/rsi/ema) for symbol
+                               (type=atr/rsi/ema) for symbol — "ema" is the
+                               SHORT-period reading, for the Technicals seat
+    "regime_ema":              get_equity_technical_indicators response
+                               (type=ema, period=config.REGIME_EMA_LOOKBACK_DAYS)
+                               for symbol — a genuinely distinct, longer-
+                               period reading for the regime filter, not
+                               the same "ema" value reused. Requesting it
+                               needs enough price history for an accurate
+                               EMA at that period — see
+                               execution.robinhood.get_regime_ema()'s
+                               docstring for how much warm-up to pull.
     "robinhood_fundamentals": get_equity_fundamentals response for
                                [symbol] — used only to resolve sector for
                                the Risk vetoer's sector check, NOT fed
@@ -27,18 +37,12 @@ BUNDLE_JSON_PATH must contain:
                                output, formed by the calling agent from
                                build_brief(symbol)
 
-Known limitations:
-- sector_map here only covers the traded symbol, not every other held
-  position — PaperBroker's sector check handles a missing entry
-  gracefully (excluded from the sum, not an error), so this under-covers
-  rather than misfires, but it means the sector check is incomplete for
-  accounts holding multiple positions. A fuller run would fetch
-  fundamentals for every held symbol too.
-- the regime filter (agents/regime.py) reuses the same `ema`/`atr_pct`
-  already fetched for the Technicals seat, rather than a separate
-  longer-period EMA (config.REGIME_EMA_LOOKBACK_DAYS' guidance) — the
-  bundle only carries one EMA reading. Fine for this demo; a production
-  cadence would fetch a second, longer-period EMA for the regime read.
+Known limitation: sector_map here only covers the traded symbol, not
+every other held position — PaperBroker's sector check handles a missing
+entry gracefully (excluded from the sum, not an error), so this under-
+covers rather than misfires, but it means the sector check is incomplete
+for accounts holding multiple positions. A fuller run would fetch
+fundamentals for every held symbol too.
 """
 
 import json
@@ -57,10 +61,15 @@ def run_demo(symbol: str, quantity: float, bundle: dict) -> dict:
     atr_pct = robinhood.get_atr_pct(symbol, price, bundle["atr"])
     rsi = robinhood.get_rsi(symbol, bundle["rsi"])
     ema = robinhood.get_ema(symbol, bundle["ema"])
+    regime_ema = robinhood.get_regime_ema(symbol, bundle["regime_ema"])
     sector_map = robinhood.get_sectors([symbol], bundle["robinhood_fundamentals"])
 
+    # ema (short) and regime_ema (long) are genuinely distinct readings —
+    # get_regime_ema() validates the response's period against
+    # config.REGIME_EMA_LOOKBACK_DAYS, so Technicals and the regime filter
+    # can no longer be silently fed the same number and mechanically agree.
     technicals_view = technicals.build_view(symbol, price, ema=ema, rsi=rsi, atr_pct=atr_pct)
-    regime_view = regime.regime_stance(symbol, price, ema=ema, atr_pct=atr_pct)
+    regime_view = regime.regime_stance(symbol, price, ema=regime_ema, atr_pct=atr_pct)
     fundamentals_verdict = bundle["fundamentals_verdict"]
 
     decision = judge.decide(fundamentals_verdict, technicals_view, regime=regime_view, quantity=quantity)
@@ -70,7 +79,8 @@ def run_demo(symbol: str, quantity: float, bundle: dict) -> dict:
     baseline = judge.baseline_decide(fundamentals_verdict, technicals_view, quantity=quantity)
 
     print(config.mode_banner())
-    print(f"{symbol} @ ${price:,.2f}   ATR {atr_pct * 100:.2f}%   RSI {rsi:.1f}   EMA {ema:.2f}")
+    print(f"{symbol} @ ${price:,.2f}   ATR {atr_pct * 100:.2f}%   RSI {rsi:.1f}   "
+          f"EMA(short) {ema:.2f}   EMA(regime, {config.REGIME_EMA_LOOKBACK_DAYS}d) {regime_ema:.2f}")
     print(f"\nFundamentals: {fundamentals_verdict['stance']} "
           f"({fundamentals_verdict['confidence']}) — {fundamentals_verdict['reasons']}")
     print(f"Technicals:   {technicals_view['stance']} "
