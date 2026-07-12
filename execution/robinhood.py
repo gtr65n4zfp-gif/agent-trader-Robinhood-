@@ -73,6 +73,37 @@ def get_quote(symbol: str, raw_quote: dict) -> float:
     return get_quotes([symbol], raw_quote)[symbol.upper()]
 
 
+# --- Volatility (for the risk vetoer's position sizing) ------------------
+
+
+def get_atr_pct(symbol: str, price: float, raw_atr: dict) -> float:
+    """
+    Parse a get_equity_technical_indicators (type="atr") response into ATR
+    expressed as a fraction of price — what agents.risk_vetoer.review()
+    expects for its atr_pct argument.
+
+    raw_atr is the MCP tool response for a call with symbol=symbol, type="atr",
+    interval="day" (or similar), output="latest". price is the symbol's
+    current price, used only to convert the dollar ATR into a ratio.
+    """
+    indicators = raw_atr.get("data", {}).get("indicators", [])
+    atr_indicator = next((i for i in indicators if i.get("type") == "atr"), None)
+    if atr_indicator is None:
+        raise RobinhoodDataError(f"{symbol}: no ATR indicator in response.")
+
+    series = atr_indicator.get("series", [])
+    if not series:
+        raise RobinhoodDataError(f"{symbol}: ATR series is empty.")
+
+    atr_value = series[-1].get("value")
+    if atr_value is None:
+        raise RobinhoodDataError(f"{symbol}: latest ATR bar has no value.")
+    if price <= 0:
+        raise RobinhoodDataError(f"{symbol}: price must be positive to compute ATR%.")
+
+    return float(atr_value) / price
+
+
 # --- Real account snapshot ----------------------------------------------
 
 

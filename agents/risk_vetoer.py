@@ -2,28 +2,55 @@
 Risk vetoer — first seat of the trade council (see agents/COUNCIL_DESIGN.md).
 
 Pure veto power: given a proposed trade and the current account state, checks
-the proposal against the hard risk caps in execution/config.py
-(MAX_TRADE_USD, MAX_POSITION_PCT). It never originates a trade — only
-approves or rejects one that already exists elsewhere (a human today,
-eventually the Fundamentals/Technicals seats + Judge). No LLM and no
-judgment call: this seat is pure arithmetic against fixed limits, which is
-why it's the first one built.
+the proposal against the risk caps in execution/config.py — a flat per-trade
+dollar cap (MAX_TRADE_USD), a volatility-scaled position-concentration cap
+(MAX_POSITION_PCT, scaled by TARGET_DAILY_VOL_PCT/MIN_VOL_SCALAR when a
+volatility reading is supplied), and a portfolio-wide drawdown circuit
+breaker (MAX_DRAWDOWN_PCT). It never originates a trade — only approves or
+rejects one that already exists elsewhere (a human today, eventually the
+Fundamentals/Technicals seats + Judge). No LLM and no judgment call: every
+check here is arithmetic against fixed limits, which is why this seat was
+built first.
 
 A veto is a normal, expected outcome, not an error — this module never
-raises for a failed check. It only reads account state that's handed to it;
-it doesn't touch PaperBroker or place anything itself.
+raises for a failed check. It only reads state that's handed to it; it
+doesn't touch PaperBroker, fetch market data, or place anything itself.
 """
 
 from execution import config
 
 
-def review(symbol: str, side: str, quantity: float, price: float, account: dict) -> dict:
+def _vol_scalar(atr_pct: float) -> float:
+    """How much to shrink the position cap for a symbol this volatile.
+    1.0 at or below the target vol (no shrink — the cap is a ceiling, never
+    raised for a calmer-than-target name); floors at MIN_VOL_SCALAR so a very
+    volatile name still gets some room instead of an effectively-zero cap."""
+    if atr_pct <= 0:
+        return 1.0
+    return max(config.MIN_VOL_SCALAR, min(1.0, config.TARGET_DAILY_VOL_PCT / atr_pct))
+
+
+def review(
+    symbol: str,
+    side: str,
+    quantity: float,
+    price: float,
+    account: dict,
+    atr_pct: float | None = None,
+    portfolio_drawdown_pct: float | None = None,
+) -> dict:
     """
     Check a proposed trade against the risk caps.
 
     account: a PaperBroker.account(prices) snapshot (or an equivalently
     shaped dict) valued at current prices, so positions_value/total_value
     are accurate for the position-concentration check.
+    atr_pct: this symbol's ATR as a fraction of price (e.g. 0.025 = 2.5%
+    average daily range). Optional — omit to fall back to the flat
+    MAX_POSITION_PCT cap with no volatility adjustment.
+    portfolio_drawdown_pct: how far current total_value sits below the
+    account's peak equity (e.g. 0.12 = 12% drawdown). Optional — omit to
+    skip the drawdown circuit breaker entirely.
 
     Returns a decision dict with `approved`, a human-readable `reason`, the
     individual `checks`, and the numbers behind them in `detail`.
@@ -41,11 +68,26 @@ def review(symbol: str, side: str, quantity: float, price: float, account: dict)
         projected_position_value = current_position_value + cost
         position_pct = projected_position_value / total_value if total_value > 0 else float("inf")
 
-        checks["within_position_cap"] = position_pct <= config.MAX_POSITION_PCT
-        detail["projected_position_pct"] = round(position_pct, 4)
+        position_cap = config.MAX_POSITION_PCT
         detail["max_position_pct"] = config.MAX_POSITION_PCT
+        if atr_pct is not None:
+            scalar = _vol_scalar(atr_pct)
+            position_cap = config.MAX_POSITION_PCT * scalar
+            detail["atr_pct"] = round(atr_pct, 4)
+            detail["vol_scalar"] = round(scalar, 4)
+            detail["effective_position_cap"] = round(position_cap, 4)
+
+        checks["within_position_cap"] = position_pct <= position_cap
+        detail["projected_position_pct"] = round(position_pct, 4)
+
+        # Drawdown circuit breaker only blocks new entries, never exits.
+        if portfolio_drawdown_pct is not None:
+            checks["within_drawdown_limit"] = portfolio_drawdown_pct < config.MAX_DRAWDOWN_PCT
+            detail["portfolio_drawdown_pct"] = round(portfolio_drawdown_pct, 4)
+            detail["max_drawdown_pct"] = config.MAX_DRAWDOWN_PCT
     else:
-        # Selling only reduces exposure — concentration cap doesn't apply.
+        # Selling only reduces exposure — concentration cap and the
+        # drawdown breaker don't apply; capital preservation always wins.
         checks["within_position_cap"] = True
 
     approved = all(checks.values())
@@ -87,3 +129,15 @@ if __name__ == "__main__":
 
     print("\nSell (never blocked by the position cap):")
     print(review("AAPL", "sell", 4, 200.0, demo_account))
+
+    print("\nCalm name (ATR ~2%, at the target vol — cap stays ~full 10%):")
+    print(review("MSFT", "buy", 1, 300.0, demo_account, atr_pct=0.02))
+
+    print("\nVolatile name (ATR ~10% of price — cap shrinks toward the MIN_VOL_SCALAR floor):")
+    print(review("MSTR", "buy", 1, 90.0, demo_account, atr_pct=0.10))
+
+    print("\nPortfolio in a 20% drawdown — new buy blocked even though the trade itself is fine:")
+    print(review("MSFT", "buy", 1, 300.0, demo_account, portfolio_drawdown_pct=0.20))
+
+    print("\nSame 20% drawdown, but a sell is never blocked by it:")
+    print(review("AAPL", "sell", 4, 200.0, demo_account, portfolio_drawdown_pct=0.20))
