@@ -12,7 +12,9 @@ venv/
 # Logs and local data
 logs/*.log
 logs/*.json
+!logs/paper_portfolio.json
 logs/*.jsonl
+!logs/trades.jsonl
 *.sqlite
 
 # OS
