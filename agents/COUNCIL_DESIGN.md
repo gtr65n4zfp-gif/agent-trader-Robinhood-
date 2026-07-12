@@ -44,11 +44,26 @@ single missed opportunity.
 
 ## Regime / volatility filter
 
-A simple, explainable filter (not a seat) that runs before the council
-convenes: if the market — or the symbol — is in a low-volatility,
+Built (`agents/regime.py`). A simple, explainable filter, not a seat with a
+vote: if the market — or the symbol — is in a low-volatility,
 choppy/range-bound state, force a sit-out regardless of what the seats would
 otherwise say. Most signal, fundamental or technical, is noisiest and least
 reliable in choppy conditions; better to do nothing than trade a false signal.
+
+Two axes, rule-based only (no HMM, no ML, no clustering):
+volatility (low/normal/high, relative to `execution/config.py`'s calibrated
+`TARGET_DAILY_VOL_PCT`) and trend (up/down/sideways, price vs. its EMA over
+a wider band than the Technicals seat uses). Combined into named states —
+`low_vol_ranging` and `ranging` are NOT tradeable; `low_vol_trend`,
+`trending`, and `volatile_trend` are.
+
+Can only TIGHTEN, never loosen: wired into `agents/judge.py`'s entry gate
+as an additional condition (a non-tradeable regime forces HOLD outright,
+checked first, never overridden by the seats), and into the exit engine
+as the `regime_change` path (`agents/exits.py`) — a held position whose
+regime flips to non-tradeable gets closed. A regime-caused sit-out is
+logged distinctly (`action="regime_sitout"`) and, being a non-fill, never
+counts toward the round-trip go-live counter.
 
 ## Exit logic — a first-class concern
 

@@ -1,8 +1,9 @@
 """
-Exit-logic demo — proves all three built exit paths (stop_loss,
-take_profit, conviction_drop) fire correctly and close positions through
-PaperBroker, with zero real-money risk. Regime-change is not built yet
-(next milestone; see agents/exits.py's seam comment).
+Exit-logic demo — proves the three exit paths that existed when this demo
+was written (stop_loss, take_profit, conviction_drop) fire correctly and
+close positions through PaperBroker, with zero real-money risk. A fourth
+path, regime_change, was added later — see agents/demo_regime.py for its
+dedicated proof, kept separate rather than folded in here.
 
 Uses an ISOLATED paper account (logs/demo_exits_portfolio.json, via
 PaperBroker's portfolio_path override) rather than the shared one, reset

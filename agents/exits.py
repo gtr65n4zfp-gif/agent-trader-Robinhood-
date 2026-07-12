@@ -9,18 +9,16 @@ order:
 
     1. stop_loss        — hard, mechanical, not overridable by the judge.
     2. take_profit       — target hit, gains locked in.
-    3. [regime_change]   — NOT BUILT YET; the seam for it is right here,
-                            between take_profit and conviction_drop, per
-                            COUNCIL_DESIGN.md's listed order. Next
-                            milestone, not this one.
+    3. regime_change      — the regime filter (agents/regime.py) has
+                            flipped against the open position.
     4. conviction_drop   — the thesis that justified holding has weakened.
 
 Once a position is open, the priority is capital preservation, not
 confirmation — any one reason is enough, unlike entries.
 
-check_stop_loss / check_take_profit / check_conviction_drop / evaluate_exits
-are pure functions: no PaperBroker calls, no trade_log writes, no market
-data fetched. close_position() and run_exit_sweep() are the impure layer
+check_stop_loss / check_take_profit / check_regime_change / check_conviction_drop /
+evaluate_exits are pure functions: no PaperBroker calls, no trade_log writes,
+no market data fetched. close_position() and run_exit_sweep() are the impure layer
 that actually acts on a fired exit signal — same split as
 agents/judge.py (decide()/baseline_decide() are pure; the calling script
 does the logging) and agents/risk_vetoer.py (review() is pure; PaperBroker
@@ -61,6 +59,26 @@ def check_take_profit(entry_price: float, current_price: float) -> dict:
     return {"path": "take_profit", "fires": fires, "reason": reason}
 
 
+def check_regime_change(regime: dict) -> dict:
+    """
+    Fires if the HELD symbol's current regime is non-tradeable — price
+    conditions have turned against the position (e.g. it was opened
+    during a clear trend that has since flattened into low-volatility
+    chop). Unlike check_conviction_drop (a fresh Judge re-decision over
+    the seats' theses), this only looks at price-derived regime state.
+
+    regime: fresh agents.regime.regime_stance() output for the held
+    symbol — a new read, not what the regime was at entry.
+    """
+    fires = not regime["tradeable"]
+    reason = (
+        f"regime flipped to {regime['state']} — {regime['reason']}"
+        if fires else
+        f"regime still {regime['state']}, tradeable"
+    )
+    return {"path": "regime_change", "fires": fires, "reason": reason}
+
+
 def check_conviction_drop(
     fundamentals: dict, technicals: dict, quantity: float = judge.DEFAULT_QUANTITY
 ) -> dict:
@@ -94,6 +112,7 @@ def evaluate_exits(
     current_price: float,
     fundamentals: dict | None = None,
     technicals: dict | None = None,
+    regime: dict | None = None,
     quantity: float = judge.DEFAULT_QUANTITY,
 ) -> dict | None:
     """
@@ -104,6 +123,8 @@ def evaluate_exits(
     check_conviction_drop — omit either to skip that check entirely (same
     graceful-degrade pattern as agents.risk_vetoer.review()'s optional
     args), e.g. when fresh seat re-reads aren't available for this pass.
+    regime: optional agents.regime.regime_stance() output, required only
+    for check_regime_change — omit to skip that check entirely.
     """
     stop = check_stop_loss(entry_price, current_price)
     if stop["fires"]:
@@ -113,8 +134,10 @@ def evaluate_exits(
     if profit["fires"]:
         return profit
 
-    # Regime-change exit would slot in here, per COUNCIL_DESIGN.md's
-    # listed priority order — not built yet (next milestone).
+    if regime is not None:
+        regime_signal = check_regime_change(regime)
+        if regime_signal["fires"]:
+            return regime_signal
 
     if fundamentals is not None and technicals is not None:
         conviction = check_conviction_drop(fundamentals, technicals, quantity=quantity)
@@ -154,6 +177,7 @@ def run_exit_sweep(
     broker: PaperBroker,
     prices: dict[str, float],
     seat_views: dict[str, tuple[dict, dict]] | None = None,
+    regimes: dict[str, dict] | None = None,
 ) -> list[dict]:
     """
     Check every open position against all exit paths and close whichever
@@ -168,6 +192,9 @@ def run_exit_sweep(
     conviction_drop check. A symbol missing here just skips that one
     check for that symbol, same as evaluate_exits()'s own graceful
     degrade — stop_loss and take_profit still run regardless.
+    regimes: optional {symbol: agents.regime.regime_stance() output} for
+    the regime_change check. Same graceful degrade: a symbol missing here
+    just skips that one check for that symbol.
 
     Returns one entry per position actually closed:
     {symbol, path, reason, realized_pnl, trades}.
@@ -184,7 +211,8 @@ def run_exit_sweep(
             continue
 
         fundamentals, technicals = seat_views.get(symbol, (None, None)) if seat_views else (None, None)
-        signal = evaluate_exits(entry_price, prices[symbol], fundamentals, technicals)
+        symbol_regime = regimes.get(symbol) if regimes else None
+        signal = evaluate_exits(entry_price, prices[symbol], fundamentals, technicals, symbol_regime)
         if signal is None:
             continue
 
@@ -240,12 +268,37 @@ if __name__ == "__main__":
     print("\nConviction drop: both seats still bullish and confident (should NOT fire):")
     print(check_conviction_drop(still_bullish_fundamentals, still_bullish_technicals))
 
+    non_tradeable_regime = {
+        "seat": "regime", "symbol": "AAPL", "state": "low_vol_ranging",
+        "volatility": "low", "trend": "sideways", "tradeable": False,
+        "reason": "low volatility, no directional edge — sitting out",
+    }
+    tradeable_regime = {
+        "seat": "regime", "symbol": "AAPL", "state": "trending",
+        "volatility": "normal", "trend": "up", "tradeable": True,
+        "reason": "normal volatility, clear up trend",
+    }
+    print("\nRegime change: flipped to non-tradeable (should fire):")
+    print(check_regime_change(non_tradeable_regime))
+
+    print("\nRegime change: still tradeable (should NOT fire):")
+    print(check_regime_change(tradeable_regime))
+
     print("\nevaluate_exits: stop-loss wins even when other paths might also fire "
           "(priority order — stop-loss is checked first):")
     print(evaluate_exits(
         entry_price=100.0, current_price=90.0,
         fundamentals=weak_fundamentals, technicals=still_bullish_technicals,
+        regime=non_tradeable_regime,
     ))
 
-    print("\nevaluate_exits: no price trigger, no seat data supplied -> stays open:")
+    print("\nevaluate_exits: no price trigger, but regime flipped non-tradeable "
+          "(regime_change should fire ahead of conviction_drop, even though both would fire):")
+    print(evaluate_exits(
+        entry_price=100.0, current_price=101.0,
+        fundamentals=weak_fundamentals, technicals=still_bullish_technicals,
+        regime=non_tradeable_regime,
+    ))
+
+    print("\nevaluate_exits: no price trigger, no seat or regime data supplied -> stays open:")
     print(evaluate_exits(entry_price=100.0, current_price=101.0))

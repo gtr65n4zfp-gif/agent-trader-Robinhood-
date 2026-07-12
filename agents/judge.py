@@ -13,9 +13,17 @@ that call still runs the full risk gate regardless of what the Judge said.
 
 NO-TRADE IS THE DEFAULT — a conjunctive gate, not a vote or an average. A
 buy/sell decision only fires when Fundamentals and Technicals agree on
-direction AND both clear CONFIDENCE_THRESHOLD. Any disagreement, either
-seat below threshold, or a neutral stance from either seat all fall
-through to a HOLD. Overtrading is a bigger threat than a missed trade.
+direction AND both clear CONFIDENCE_THRESHOLD, AND (if supplied) the
+regime filter (agents/regime.py) doesn't object. Any disagreement, either
+seat below threshold, a neutral stance from either seat, or a non-
+tradeable regime all fall through to a HOLD. Overtrading is a bigger
+threat than a missed trade.
+
+The regime filter can only TIGHTEN this gate, never loosen it — it's
+checked first, and a non-tradeable regime forces HOLD outright regardless
+of what Fundamentals/Technicals say. There's no path where a favorable
+regime overrides an otherwise-disqualifying seat disagreement; "tradeable"
+just means "no objection from price conditions," not "go."
 
 decide() and baseline_decide() are pure functions — no PaperBroker calls,
 no trade_log writes. Logging a HOLD (so "chose not to trade" is visible
@@ -32,13 +40,19 @@ CONFIDENCE_THRESHOLD = 0.5  # each seat must clear this AND agree on direction
 DEFAULT_QUANTITY = 1
 
 
-def decide(fundamentals: dict, technicals: dict, quantity: float = DEFAULT_QUANTITY) -> dict:
+def decide(
+    fundamentals: dict, technicals: dict, regime: dict | None = None, quantity: float = DEFAULT_QUANTITY
+) -> dict:
     """
     Weigh two seat outputs into a single decision.
 
     fundamentals: agents.fundamentals_seat.form_verdict() output.
     technicals: agents.technicals.build_view() output.
-    Both must be for the same symbol.
+    regime: optional agents.regime.regime_stance() output. Omit to skip
+    the regime gate entirely (no objection, same as a tradeable regime).
+    A non-tradeable regime forces HOLD outright — see the module
+    docstring: this can only tighten the gate, never loosen it.
+    All supplied seat outputs must be for the same symbol.
 
     Returns {action: buy/sell/hold, symbol, target_quantity, confidence,
     rationale, seat_inputs}.
@@ -49,7 +63,25 @@ def decide(fundamentals: dict, technicals: dict, quantity: float = DEFAULT_QUANT
             f"technicals={technicals['symbol']!r}"
         )
     symbol = fundamentals["symbol"]
+    if regime is not None and regime["symbol"] != symbol:
+        raise ValueError(f"seat symbol mismatch: regime={regime['symbol']!r} vs {symbol!r}")
+
     seat_inputs = {"fundamentals": fundamentals, "technicals": technicals}
+    if regime is not None:
+        seat_inputs["regime"] = regime
+
+    # Regime gate first — cheapest, most decisive block, and it must never
+    # be overridden by what the other seats say.
+    if regime is not None and not regime["tradeable"]:
+        return {
+            "seat": "judge",
+            "action": "hold",
+            "symbol": symbol,
+            "target_quantity": 0,
+            "confidence": 0.0,
+            "rationale": f"No-trade is the default: regime filter — {regime['state']}: {regime['reason']}",
+            "seat_inputs": seat_inputs,
+        }
 
     f_stance, f_conf = fundamentals["stance"], fundamentals["confidence"]
     t_stance, t_conf = technicals["stance"], technicals["confidence"]
@@ -160,3 +192,21 @@ if __name__ == "__main__":
 
     print("\nBaseline for the disagreement case — no strict gate, picks the stronger signal:")
     print(baseline_decide(bullish_fundamentals, bearish_technicals))
+
+    tradeable_regime = {
+        "seat": "regime", "symbol": "AAPL", "state": "trending",
+        "volatility": "normal", "trend": "up", "tradeable": True,
+        "reason": "normal volatility, clear up trend",
+    }
+    non_tradeable_regime = {
+        "seat": "regime", "symbol": "AAPL", "state": "low_vol_ranging",
+        "volatility": "low", "trend": "sideways", "tradeable": False,
+        "reason": "low volatility, no directional edge — sitting out",
+    }
+
+    print("\nBoth seats bullish and confident, but regime is non-tradeable "
+          "(should HOLD regardless — the gate can only tighten):")
+    print(decide(bullish_fundamentals, bullish_technicals, regime=non_tradeable_regime))
+
+    print("\nSame bullish seats, tradeable regime (should BUY, same as with no regime supplied):")
+    print(decide(bullish_fundamentals, bullish_technicals, regime=tradeable_regime))

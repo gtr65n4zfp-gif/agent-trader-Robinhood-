@@ -110,4 +110,31 @@ SLIPPAGE_BPS: float = 5.0    # 5 basis points = 0.05% of price, against the trad
 FLAT_FEE_USD: float = 0.0    # Robinhood equities are commission-free; kept explicit rather than
                               # silently assumed, in case a future broker/asset class isn't
 
+# Regime filter (agents/regime.py) — the "windshield": lets the council sit
+# out conditions where systems tend to bleed slowly rather than lose fast
+# (low-volatility, range-bound chop with no directional edge to capture).
+# Rule-based only, two axes, combined into a small set of named states.
+#
+# Volatility band edges are multiples of TARGET_DAILY_VOL_PCT above — the
+# same calibrated large-cap median used for position sizing — rather than
+# new magic numbers: "low"/"high" are relative to what a typical liquid
+# large-cap actually does, not an arbitrary guess.
+REGIME_LOW_VOL_MULTIPLIER: float = 0.5   # ATR% below 0.5x the calibrated median = "low" volatility
+REGIME_HIGH_VOL_MULTIPLIER: float = 2.0  # ATR% above 2.0x the calibrated median = "high" volatility
+
+# Trend band: price within this % of its EMA counts as "sideways". Wider
+# than agents.technicals's own _TREND_BAND_PCT (0.5%), which is tuned for
+# "which way is momentum leaning right now" — this asks a coarser question,
+# "is there a real trend to trade at all, or just noise," so it needs more
+# room to avoid calling ordinary chop a trend. Policy choice, not derived
+# from data.
+REGIME_TREND_BAND_PCT: float = 0.02   # within 2% of EMA = sideways/ranging
+
+# Guidance, not an enforced constant (agents/regime.py takes an EMA value
+# already resolved by the caller — see execution/robinhood.py's
+# agent-mediated pattern — so this can't be checked in code): use a
+# longer-period EMA here than the Technicals seat's, for a smoother read
+# appropriate to classifying the regime rather than immediate momentum.
+REGIME_EMA_LOOKBACK_DAYS: int = 20
+
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")

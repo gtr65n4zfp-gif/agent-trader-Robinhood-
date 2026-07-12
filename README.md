@@ -74,10 +74,19 @@ only after it proves itself.
             against a real (isolated) paper account — stop-loss, take-
             profit, and conviction-drop each closed a position with
             correctly recorded realized P&L (`agents/demo_exits.py`)
-      - [ ] Regime/volatility filter (forced sit-out in choppy conditions) —
-            the seam for it is explicit in `agents/exits.py`, not built
+      - [x] Regime filter — rule-based, two axes (volatility relative to the
+            calibrated `TARGET_DAILY_VOL_PCT`, trend vs. EMA), five named
+            states; can only tighten the entry gate (never loosen it) and
+            adds the `regime_change` exit path. A sit-out is logged
+            distinctly (`regime_sitout`) and never counts as a round-trip
+            (`agents/regime.py`)
+      - [x] End-to-end proof: a favorable regime let a trade through, an
+            unfavorable one forced a HOLD despite both seats being strongly
+            bullish (and didn't move the round-trip counter), and a regime
+            flip closed a held position via `regime_change` — all
+            deterministic, verified live (`agents/demo_regime.py`)
       - [ ] Automated/scheduled cadence — every council run above is still
-            triggered manually
+            triggered manually; last piece before a real track record
 - [ ] Milestone 4: Backtest / track paper P&L over time
 - [ ] Milestone 5: Real-money pilot — blocked until the go-live gate below is met
 

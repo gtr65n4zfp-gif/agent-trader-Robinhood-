@@ -27,18 +27,24 @@ BUNDLE_JSON_PATH must contain:
                                output, formed by the calling agent from
                                build_brief(symbol)
 
-Known limitation: sector_map here only covers the traded symbol, not
-every other held position — PaperBroker's sector check handles a missing
-entry gracefully (excluded from the sum, not an error), so this under-
-covers rather than misfires, but it means the sector check is incomplete
-for accounts holding multiple positions. A fuller run would fetch
-fundamentals for every held symbol too.
+Known limitations:
+- sector_map here only covers the traded symbol, not every other held
+  position — PaperBroker's sector check handles a missing entry
+  gracefully (excluded from the sum, not an error), so this under-covers
+  rather than misfires, but it means the sector check is incomplete for
+  accounts holding multiple positions. A fuller run would fetch
+  fundamentals for every held symbol too.
+- the regime filter (agents/regime.py) reuses the same `ema`/`atr_pct`
+  already fetched for the Technicals seat, rather than a separate
+  longer-period EMA (config.REGIME_EMA_LOOKBACK_DAYS' guidance) — the
+  bundle only carries one EMA reading. Fine for this demo; a production
+  cadence would fetch a second, longer-period EMA for the regime read.
 """
 
 import json
 import sys
 
-from . import judge, technicals
+from . import judge, regime, technicals
 from execution import config, robinhood, trade_log
 from execution.paper_broker import PaperBroker, TradeError
 
@@ -54,9 +60,13 @@ def run_demo(symbol: str, quantity: float, bundle: dict) -> dict:
     sector_map = robinhood.get_sectors([symbol], bundle["robinhood_fundamentals"])
 
     technicals_view = technicals.build_view(symbol, price, ema=ema, rsi=rsi, atr_pct=atr_pct)
+    regime_view = regime.regime_stance(symbol, price, ema=ema, atr_pct=atr_pct)
     fundamentals_verdict = bundle["fundamentals_verdict"]
 
-    decision = judge.decide(fundamentals_verdict, technicals_view, quantity=quantity)
+    decision = judge.decide(fundamentals_verdict, technicals_view, regime=regime_view, quantity=quantity)
+    # Baseline stays regime-blind on purpose — it's the "no seat isolation,
+    # no gate at all" comparison; adding the regime gate to it would
+    # defeat the point of measuring what the real Judge's gates add.
     baseline = judge.baseline_decide(fundamentals_verdict, technicals_view, quantity=quantity)
 
     print(config.mode_banner())
@@ -65,6 +75,7 @@ def run_demo(symbol: str, quantity: float, bundle: dict) -> dict:
           f"({fundamentals_verdict['confidence']}) — {fundamentals_verdict['reasons']}")
     print(f"Technicals:   {technicals_view['stance']} "
           f"({technicals_view['confidence']}) — {technicals_view['reasons']}")
+    print(f"Regime:       {regime_view['state']} (tradeable={regime_view['tradeable']}) — {regime_view['reason']}")
     print(f"\nJudge decision: {decision}")
     print(f"Baseline (ablation, never acted on): {baseline}")
 
@@ -87,13 +98,21 @@ def run_demo(symbol: str, quantity: float, bundle: dict) -> dict:
         # No-trade is the default, and it's just as visible in the log as
         # a fill — the Judge itself never writes to trade_log; that's the
         # orchestrator's job here, same as PaperBroker (not risk_vetoer)
-        # is what writes veto records.
+        # is what writes veto records. A regime-caused hold gets its own
+        # action ("regime_sitout" — see agents/regime.py) rather than the
+        # generic "hold", so the track record shows how often and why the
+        # council sat out on price conditions specifically — and, being
+        # a non-fill either way, it's excluded from round_trip_stats()
+        # exactly like a plain hold or a risk-vetoer veto.
+        is_regime_sitout = not regime_view["tradeable"]
         trade_log.record(
-            "hold", symbol, 0, price, paper=True, reason=decision["rationale"],
+            "regime_sitout" if is_regime_sitout else "hold", symbol, 0, price, paper=True,
+            reason=decision["rationale"],
             extra={"seat": "judge", "confidence": decision["confidence"], "seat_inputs": decision["seat_inputs"]},
         )
         account = broker.account({symbol: price})
-        print(f"\nNo trade — logged as hold. Paper account unchanged: {account}")
+        print(f"\nNo trade — logged as {'regime_sitout' if is_regime_sitout else 'hold'}. "
+              f"Paper account unchanged: {account}")
         return account
 
     reason = f"Judge: {decision['rationale']}"
