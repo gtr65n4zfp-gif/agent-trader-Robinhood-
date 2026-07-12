@@ -46,3 +46,14 @@ def read_all() -> list[dict]:
         return []
     with open(_LOG_PATH) as f:
         return [json.loads(line) for line in f if line.strip()]
+
+
+def count_trades_today() -> int:
+    """How many paper buys/sells have actually executed today (UTC calendar
+    day) — vetoes and other non-fills don't count. Used by the risk
+    vetoer's daily trade-frequency circuit breaker."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    return sum(
+        1 for e in read_all()
+        if e["mode"] == "paper" and e["action"] in ("buy", "sell") and e["timestamp"].startswith(today)
+    )

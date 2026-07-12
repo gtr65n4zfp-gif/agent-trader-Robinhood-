@@ -9,6 +9,7 @@ market data), so this engine works today with no external connection.
 
 import json
 import os
+from datetime import datetime, timezone
 
 from agents import risk_vetoer
 
@@ -26,6 +27,8 @@ class PaperBroker:
         self.cash: float = config.PAPER_STARTING_CASH
         self.positions: dict[str, float] = {}   # symbol -> shares
         self.peak_equity: float = config.PAPER_STARTING_CASH  # for the drawdown breaker
+        self.day_date: str | None = None               # UTC "YYYY-MM-DD", for the daily breakers
+        self.day_start_equity: float = config.PAPER_STARTING_CASH
         self._load()
 
     # --- persistence -------------------------------------------------------
@@ -36,12 +39,20 @@ class PaperBroker:
             self.cash = data["cash"]
             self.positions = data["positions"]
             self.peak_equity = data.get("peak_equity", config.PAPER_STARTING_CASH)
+            self.day_date = data.get("day_date")
+            self.day_start_equity = data.get("day_start_equity", config.PAPER_STARTING_CASH)
 
     def _save(self) -> None:
         os.makedirs(config.LOG_DIR, exist_ok=True)
         with open(_PORTFOLIO_PATH, "w") as f:
             json.dump(
-                {"cash": self.cash, "positions": self.positions, "peak_equity": self.peak_equity},
+                {
+                    "cash": self.cash,
+                    "positions": self.positions,
+                    "peak_equity": self.peak_equity,
+                    "day_date": self.day_date,
+                    "day_start_equity": self.day_start_equity,
+                },
                 f, indent=2,
             )
 
@@ -62,6 +73,21 @@ class PaperBroker:
             (self.peak_equity - account["total_value"]) / self.peak_equity
             if self.peak_equity > 0 else 0.0
         )
+
+        # Daily breakers reset on UTC calendar-day rollover. "Start of day"
+        # is approximated as the first time this broker observes a valued
+        # account on a new day — close enough for a paper account that gets
+        # checked regularly, but not a true market-open snapshot.
+        today = datetime.now(timezone.utc).date().isoformat()
+        if self.day_date != today:
+            self.day_date = today
+            self.day_start_equity = account["total_value"]
+            self._save()
+        daily_loss_pct = (
+            (self.day_start_equity - account["total_value"]) / self.day_start_equity
+            if self.day_start_equity > 0 else 0.0
+        )
+        trades_today = trade_log.count_trades_today()
 
         # Sector exposure: this symbol's sector plus every OTHER held
         # position sharing it, valued at whatever prices the caller gave us.
@@ -86,6 +112,7 @@ class PaperBroker:
             symbol, side, quantity, price, account,
             atr_pct=atr_pct, portfolio_drawdown_pct=drawdown_pct,
             sector=sector, sector_pct=sector_pct,
+            trades_today=trades_today, daily_loss_pct=daily_loss_pct,
         )
         if not decision["approved"]:
             trade_log.record(

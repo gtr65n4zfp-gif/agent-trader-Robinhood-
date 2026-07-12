@@ -63,4 +63,12 @@ MAX_DRAWDOWN_PCT: float = 0.15
 # split across symbols.
 MAX_SECTOR_PCT: float = 0.25
 
+# Daily circuit breakers — distinct from MAX_DRAWDOWN_PCT above, which is
+# measured from the account's all-time peak and can take a long losing
+# stretch to trip. These reset every UTC day and catch "several bad trades
+# in one session" long before a sustained drawdown would. Like the other
+# breakers, only new BUYS are blocked — exits are never rate-limited.
+MAX_TRADES_PER_DAY: int = 10
+MAX_DAILY_LOSS_PCT: float = 0.05
+
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")

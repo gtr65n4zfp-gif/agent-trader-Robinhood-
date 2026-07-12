@@ -6,8 +6,10 @@ the proposal against the risk caps in execution/config.py — a flat per-trade
 dollar cap (MAX_TRADE_USD), a volatility-scaled position-concentration cap
 (MAX_POSITION_PCT, scaled by TARGET_DAILY_VOL_PCT/MIN_VOL_SCALAR when a
 volatility reading is supplied), a sector-concentration cap (MAX_SECTOR_PCT,
-when sector data is supplied), and a portfolio-wide drawdown circuit breaker
-(MAX_DRAWDOWN_PCT). It never originates a trade — only approves or rejects
+when sector data is supplied), a portfolio-wide drawdown circuit breaker
+(MAX_DRAWDOWN_PCT), and two daily circuit breakers — a trade-count cap
+(MAX_TRADES_PER_DAY) and an intraday loss cap (MAX_DAILY_LOSS_PCT). It never
+originates a trade — only approves or rejects
 one that already exists elsewhere (a human today, eventually the
 Fundamentals/Technicals seats + Judge). No LLM and no judgment call: every
 check here is arithmetic against fixed limits, which is why this seat was
@@ -41,6 +43,8 @@ def review(
     portfolio_drawdown_pct: float | None = None,
     sector: str | None = None,
     sector_pct: float | None = None,
+    trades_today: int | None = None,
+    daily_loss_pct: float | None = None,
 ) -> dict:
     """
     Check a proposed trade against the risk caps.
@@ -59,6 +63,12 @@ def review(
     plus every other held position sharing it) — the caller computes the
     aggregate, this seat just checks it against MAX_SECTOR_PCT. Optional —
     omit either to skip the sector-concentration check.
+    trades_today: how many buys/sells have already executed today. Optional
+    — omit to skip the daily trade-count breaker.
+    daily_loss_pct: how far current total_value sits below today's starting
+    equity (e.g. 0.03 = 3% down since the day began) — distinct from
+    portfolio_drawdown_pct, which is measured from the all-time peak.
+    Optional — omit to skip the daily-loss breaker.
 
     Returns a decision dict with `approved`, a human-readable `reason`, the
     individual `checks`, and the numbers behind them in `detail`.
@@ -102,6 +112,18 @@ def review(
             detail["sector"] = sector
             detail["projected_sector_pct"] = round(sector_pct, 4)
             detail["max_sector_pct"] = config.MAX_SECTOR_PCT
+
+        # Daily breakers: catch "several bad trades in one session" long
+        # before a sustained drawdown from peak would trip. Buys only —
+        # exits are never rate- or loss-limited.
+        if trades_today is not None:
+            checks["within_daily_trade_limit"] = trades_today < config.MAX_TRADES_PER_DAY
+            detail["trades_today"] = trades_today
+            detail["max_trades_per_day"] = config.MAX_TRADES_PER_DAY
+        if daily_loss_pct is not None:
+            checks["within_daily_loss_limit"] = daily_loss_pct < config.MAX_DAILY_LOSS_PCT
+            detail["daily_loss_pct"] = round(daily_loss_pct, 4)
+            detail["max_daily_loss_pct"] = config.MAX_DAILY_LOSS_PCT
     else:
         # Selling only reduces exposure — concentration cap and the
         # drawdown breaker don't apply; capital preservation always wins.
@@ -165,3 +187,12 @@ if __name__ == "__main__":
 
     print("\nSame trade, but tech exposure would only reach 18% (should pass):")
     print(review("NVDA", "buy", 1, 300.0, demo_account, sector="Technology", sector_pct=0.18))
+
+    print("\n11 trades already made today, cap is 10 (should fail):")
+    print(review("MSFT", "buy", 1, 300.0, demo_account, trades_today=11))
+
+    print("\nAccount down 7% since this morning, cap is 5% (should fail):")
+    print(review("MSFT", "buy", 1, 300.0, demo_account, daily_loss_pct=0.07))
+
+    print("\nSame bad day, but a sell is never blocked by either daily breaker:")
+    print(review("AAPL", "sell", 4, 200.0, demo_account, trades_today=11, daily_loss_pct=0.07))
