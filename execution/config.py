@@ -43,11 +43,20 @@ MAX_TRADE_USD: float = 1000.0    # hard cap on any single order's dollar size
 
 # Volatility-based position sizing: MAX_POSITION_PCT above is a ceiling, not a
 # target — a position's *effective* cap scales down for names more volatile
-# than this reference. A "normal" stock's ATR runs ~2% of its price per day;
-# something several times that (meme stocks, small caps) gets a smaller slot
-# for the same dollar risk. MIN_VOL_SCALAR floors how far it can shrink so a
-# volatile name still gets some room rather than an effectively-zero cap.
-TARGET_DAILY_VOL_PCT: float = 0.02
+# than this reference. Something several times more volatile than the
+# reference (meme stocks, small caps) gets a smaller slot for the same
+# dollar risk. MIN_VOL_SCALAR floors how far it can shrink so a volatile
+# name still gets some room rather than an effectively-zero cap.
+#
+# TARGET_DAILY_VOL_PCT is calibrated, not guessed: median 14-day ATR-as-%-
+# of-price across 15 liquid large-caps spanning tech, financials, health
+# care, consumer, energy, and industrials (AAPL, MSFT, GOOGL, JPM, V, JNJ,
+# UNH, PG, KO, WMT, MCD, XOM, CVX, CAT, DIS), pulled from live Robinhood
+# data on 2026-07-11. Range ran 0.90% (XOM) to 4.41% (CAT); median 2.30%,
+# mean 2.43%. MIN_VOL_SCALAR (0.25) is still a policy choice, not derived
+# from this data — how far we're willing to shrink a slot is a risk
+# tolerance, not a market property.
+TARGET_DAILY_VOL_PCT: float = 0.023
 MIN_VOL_SCALAR: float = 0.25
 
 # Portfolio drawdown circuit breaker: once paper equity has fallen this far
