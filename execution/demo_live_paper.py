@@ -2,8 +2,10 @@
 Live-quote-into-paper-trade demo.
 
 Proves that live Robinhood market data can flow into the safe PaperBroker
-engine with zero real-money risk: fetch a real quote, buy it on paper, print
-the paper account valued at the live price, and log the trade.
+engine with zero real-money risk: fetch a real quote, run the proposed trade
+past the risk vetoer (agents/risk_vetoer.py), buy it on paper only if
+approved, print the paper account valued at the live price, and log the
+outcome either way.
 
 Like execution/robinhood.py, this script is agent-mediated: it can't open
 the OAuth-gated Robinhood MCP connection itself, so it expects the raw
@@ -16,20 +18,45 @@ agent) and saved to a JSON file. Run it as:
 import json
 import sys
 
-from . import config, robinhood
+from agents import risk_vetoer
+
+from . import config, robinhood, trade_log
 from .paper_broker import PaperBroker
 
 
 def run_demo(symbol: str, quantity: float, raw_quote: dict, reason: str) -> dict:
-    """Buy `quantity` shares of `symbol` on paper at its live MCP price."""
+    """
+    Propose buying `quantity` shares of `symbol` on paper at its live MCP
+    price. The risk vetoer gates the trade first — a veto blocks it before
+    PaperBroker ever sees it, and gets logged just like an executed trade.
+    """
     price = robinhood.get_quote(symbol, raw_quote)
 
     broker = PaperBroker()
-    trade = broker.buy(symbol, quantity, price, reason=reason)
     account = broker.account({symbol.upper(): price})
+    decision = risk_vetoer.review(symbol, "buy", quantity, price, account)
 
     print(config.mode_banner())
     print(f"Live price for {symbol.upper()}: ${price:,.2f}")
+    verdict = "APPROVED" if decision["approved"] else "VETOED"
+    print(f"Risk vetoer: {verdict} — {decision['reason']}")
+
+    if not decision["approved"]:
+        veto_entry = trade_log.record(
+            "veto",
+            symbol,
+            quantity,
+            price,
+            paper=True,
+            reason=decision["reason"],
+            extra={"seat": "risk_vetoer", "checks": decision["checks"], "detail": decision["detail"]},
+        )
+        print(f"Trade blocked — never sent to PaperBroker. Logged: {veto_entry}")
+        print(f"Paper account (unchanged): {account}")
+        return account
+
+    trade = broker.buy(symbol, quantity, price, reason=reason)
+    account = broker.account({symbol.upper(): price})
     print(f"Trade logged: {trade}")
     print(f"Paper account (valued at live price): {account}")
     return account
