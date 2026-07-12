@@ -41,9 +41,29 @@ only after it proves itself.
       - [x] Data client: ticker->CIK, recent filings, financial facts (`research/sec_client.py`)
       - [ ] Handle inconsistent XBRL tags (e.g. revenue reported under different tags)
       - [ ] Report layer: use Claude to turn a filing into a plain-English + structured report
-- [ ] Milestone 3: The council (trade review agents)
+- [ ] Milestone 3: The council (trade review agents) — see `agents/COUNCIL_DESIGN.md` for the blueprint (docs only, no code yet)
 - [ ] Milestone 4: Backtest / track paper P&L over time
-- [ ] Milestone 5: (only if profitable) tiny real-money pilot
+- [ ] Milestone 5: Real-money pilot — blocked until the go-live gate below is met
+
+## Go-live gate (Milestone 5)
+
+"Provably profitable" isn't a vibe check. Real money doesn't get touched until
+*all* of these hold, checked against the paper trade log:
+
+- **≥30 closed paper trades.** Below that, the confidence interval on the win
+  rate is too wide to mean anything — an 8/10 win rate has a roughly 44–97%
+  confidence interval, which is statistically indistinguishable from a coin
+  flip. n=7-10 doesn't tell you anything.
+- **Performance holds across ≥3 distinct market regimes** (e.g. trending up,
+  trending down, choppy/range-bound) — not just one favorable window. Good
+  numbers from a single trending period are regime alignment, not system
+  quality.
+- **Win rate reported with its confidence interval**, never a bare percentage.
+- **Total P&L including fees/slippage**, not gross.
+
+Until every box above is checked, real trading stays blocked by
+`assert_paper_mode()` and the `AGENT_TRADER_LIVE` unlock phrase in
+`execution/config.py` — no exceptions, no manual overrides.
 
 ## Layout
 
