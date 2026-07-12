@@ -1,0 +1,19 @@
+# Secrets — never commit these
+config/.env
+*.env
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Logs and local data
+logs/*.log
+logs/*.json
+logs/*.jsonl
+*.sqlite
+
+# OS
+.DS_Store
