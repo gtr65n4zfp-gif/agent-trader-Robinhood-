@@ -163,7 +163,15 @@ def get_concept(cik: str, tag: str, unit: str = "USD") -> list[dict]:
 
     tag examples (US-GAAP): 'Revenues', 'NetIncomeLoss', 'Assets',
     'CashAndCashEquivalentsAtCarryingValue'.
-    Returns a list of {value, end, form, fiscal_year, fiscal_period} newest-last.
+    Returns a list of {value, end, filed, form, fiscal_year, fiscal_period}
+    newest-last.
+
+    `end` is the reporting PERIOD's end date (e.g. a quarter closing);
+    `filed` is when that filing actually became public — typically 30-45
+    days later. These are genuinely different dates: treating `end` as
+    "knowable" is a real lookahead bug for anything doing point-in-time
+    analysis (see backtest/data.py) — a filing isn't public knowledge
+    until `filed`, regardless of what period it reports on.
     """
     data = _get_cached(CONCEPT_URL.format(cik=cik, tag=tag))
     points = []
@@ -172,6 +180,7 @@ def get_concept(cik: str, tag: str, unit: str = "USD") -> list[dict]:
             {
                 "value": p["val"],
                 "end": p["end"],
+                "filed": p.get("filed"),
                 "form": p.get("form"),
                 "fiscal_year": p.get("fy"),
                 "fiscal_period": p.get("fp"),

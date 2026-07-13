@@ -15,6 +15,7 @@ logs/*.json
 !logs/paper_portfolio.json
 logs/*.jsonl
 !logs/trades.jsonl
+logs/backtests/
 *.sqlite
 
 # OS

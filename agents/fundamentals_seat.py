@@ -92,13 +92,23 @@ def _trend(points: list[dict], lookback: int = 8) -> dict | None:
     }
 
 
-def fetch_concept_trend(cik: str, tag_candidates: list[str]) -> dict | None:
+def fetch_concept_trend(cik: str, tag_candidates: list[str], as_of: str | None = None) -> dict | None:
     """
     Fetch a concept's trend, trying each tag in tag_candidates and keeping
     whichever has the most recent data point — the ASC-606-style tag
     migration this handles for _CONCEPTS below applies to other concepts
     too (e.g. cash flow tags), so this is exposed for reuse rather than
     kept private to build_brief().
+
+    as_of: point-in-time cutoff (ISO date string, e.g. "2022-03-15") for
+    backtesting (see backtest/data.py). When given, only data points with
+    a `filed` date <= as_of are considered — filtered BEFORE picking the
+    best tag and BEFORE computing the trend, so a filing that hadn't
+    happened yet on that date can never leak in via either path. A point
+    with no `filed` value at all is excluded when as_of is given (can't
+    verify it was actually knowable — conservative by design, never the
+    other way around). None (default): today's live/unfiltered behavior,
+    unchanged.
     """
     best_points: list[dict] = []
     for tag in tag_candidates:
@@ -106,30 +116,43 @@ def fetch_concept_trend(cik: str, tag_candidates: list[str]) -> dict | None:
             points = sec_client.get_concept(cik, tag)
         except requests.RequestException:
             continue   # not reported under this tag for this filer
+        if as_of is not None:
+            points = [p for p in points if p.get("filed") and p["filed"] <= as_of]
         if points and (not best_points or points[-1]["end"] > best_points[-1]["end"]):
             best_points = points
     return _trend(best_points)
 
 
-def build_brief(ticker: str, filing_forms: list[str] | None = None) -> dict:
+def build_brief(ticker: str, filing_forms: list[str] | None = None, as_of: str | None = None) -> dict:
     """
     Pull and organize this company's SEC data into a structured brief — no
     verdict, just the facts a Fundamentals judgment would be formed from.
 
     ticker: stock ticker, e.g. "AAPL".
     filing_forms: which filing types to include (default 10-K/10-Q/8-K).
+    as_of: point-in-time cutoff (ISO date string) for backtesting — see
+    fetch_concept_trend()'s docstring for the filed-date contract. Also
+    filters recent_filings to filing_date <= as_of. None (default):
+    today's live/unfiltered behavior, unchanged.
     """
     ticker = ticker.upper().strip()
     cik = sec_client.ticker_to_cik(ticker)
 
     concepts = {
-        label: fetch_concept_trend(cik, tag_candidates)
+        label: fetch_concept_trend(cik, tag_candidates, as_of=as_of)
         for label, tag_candidates in _CONCEPTS.items()
     }
 
+    # get_recent_filings() returns the N most recent filings AS OF TODAY,
+    # newest-first — for a historical as_of, those 6 are almost certainly
+    # all newer than the cutoff, which would silently filter down to
+    # nothing. Fetch a much wider pool first when truncating, then keep
+    # only the most recent 6 that actually clear the as_of bar.
     filings = sec_client.get_recent_filings(
-        cik, forms=filing_forms or ["10-K", "10-Q", "8-K"], limit=6
+        cik, forms=filing_forms or ["10-K", "10-Q", "8-K"], limit=200 if as_of is not None else 6
     )
+    if as_of is not None:
+        filings = [f for f in filings if f["filing_date"] <= as_of][:6]
 
     return {
         "seat": "fundamentals",
@@ -137,6 +160,7 @@ def build_brief(ticker: str, filing_forms: list[str] | None = None) -> dict:
         "cik": cik,
         "concepts": concepts,
         "recent_filings": filings,
+        "as_of": as_of,
     }
 
 

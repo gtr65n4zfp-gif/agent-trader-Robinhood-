@@ -147,7 +147,8 @@ def evaluate_exits(
     return None
 
 
-def close_position(broker: PaperBroker, symbol: str, quantity: float, price: float, reason: str) -> list[dict]:
+def close_position(broker: PaperBroker, symbol: str, quantity: float, price: float, reason: str,
+                    now=None) -> list[dict]:
     """
     Close (fully or partially) a position through PaperBroker.sell(),
     splitting into multiple sells if the full quantity would exceed
@@ -157,6 +158,12 @@ def close_position(broker: PaperBroker, symbol: str, quantity: float, price: flo
     daily-loss — see PaperBroker.sell()'s docstring), so the only reason
     a close would fail here is the flat dollar cap, which this works
     around instead of accepting.
+
+    now: threaded straight through to every broker.sell() call — see
+    PaperBroker.sell()'s own now parameter. Needed so a backtest replaying
+    a simulated date (backtest/engine.py) doesn't silently fall back to
+    the real wall clock for the daily circuit breakers' day-rollover.
+    None (default): real wall clock, unchanged prior behavior.
 
     Returns the list of individual sell trade records — usually one,
     more if split.
@@ -168,7 +175,7 @@ def close_position(broker: PaperBroker, symbol: str, quantity: float, price: flo
     max_shares_per_chunk = max(1e-9, (config.MAX_TRADE_USD * 0.99) / price)
     while remaining > 1e-9:
         chunk = min(remaining, max_shares_per_chunk)
-        trades.append(broker.sell(symbol, chunk, price, reason=reason))
+        trades.append(broker.sell(symbol, chunk, price, reason=reason, now=now))
         remaining -= chunk
     return trades
 

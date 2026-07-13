@@ -32,7 +32,7 @@ def _fill_price(price: float, side: str) -> float:
 
 
 class PaperBroker:
-    def __init__(self, portfolio_path: str | None = None):
+    def __init__(self, portfolio_path: str | None = None, log_path: str | None = None):
         """
         portfolio_path: override the default shared state file
         (logs/paper_portfolio.json). Almost nothing should pass this —
@@ -40,11 +40,17 @@ class PaperBroker:
         account instead of whatever state the shared paper account
         happens to be in (e.g. an existing drawdown from unrelated
         earlier trades), without touching real accumulated history.
-        trade_log is still shared regardless — those entries are real
+        trade_log is shared by default (those entries are real
         paper-trading activity either way, and belong in the one audit
-        trail.
+        trail) — UNLESS log_path is also given, which routes every trade
+        this broker records into an isolated log instead (see
+        execution.trade_log.record()'s own log_path parameter). This
+        exists for the same reason portfolio_path does, but for the audit
+        trail rather than account state — e.g. backtest/engine.py, which
+        must never write into the live logs/trades.jsonl.
         """
         self._portfolio_path = portfolio_path or _PORTFOLIO_PATH
+        self._log_path = log_path
         self.cash: float = config.PAPER_STARTING_CASH
         self.positions: dict[str, float] = {}   # symbol -> shares
         self.cost_basis: dict[str, float] = {}  # symbol -> average entry fill price
@@ -87,10 +93,17 @@ class PaperBroker:
     # --- risk gate -----------------------------------------------------------
     def _check_risk(self, symbol: str, side: str, quantity: float, price: float,
                      prices: dict[str, float] | None, atr_pct: float | None,
-                     sector_map: dict[str, str] | None = None) -> None:
+                     sector_map: dict[str, str] | None = None, now: datetime | None = None) -> None:
         """Run the risk vetoer; raise TradeError (and log the veto) if it blocks
         the trade. Nothing can buy or sell through this broker without clearing
-        this — the gate lives here, not in whichever script happens to call in."""
+        this — the gate lives here, not in whichever script happens to call in.
+
+        now: for testing, and for a backtest replaying a simulated past
+        date (see backtest/engine.py) — the daily circuit breakers below
+        need to roll over on the SIMULATED day, not the real wall clock,
+        or they'd silently never reset while stepping through history.
+        Defaults to the real wall clock, unchanged from prior behavior."""
+        now = now or datetime.now(timezone.utc)
         all_prices = {**(prices or {}), symbol: price}
         account = self.account(all_prices)
 
@@ -102,11 +115,12 @@ class PaperBroker:
             if self.peak_equity > 0 else 0.0
         )
 
-        # Daily breakers reset on UTC calendar-day rollover. "Start of day"
-        # is approximated as the first time this broker observes a valued
+        # Daily breakers reset on calendar-day rollover (UTC in live use;
+        # whatever `now` represents in a backtest). "Start of day" is
+        # approximated as the first time this broker observes a valued
         # account on a new day — close enough for a paper account that gets
         # checked regularly, but not a true market-open snapshot.
-        today = datetime.now(timezone.utc).date().isoformat()
+        today = now.date().isoformat()
         if self.day_date != today:
             self.day_date = today
             self.day_start_equity = account["total_value"]
@@ -115,7 +129,7 @@ class PaperBroker:
             (self.day_start_equity - account["total_value"]) / self.day_start_equity
             if self.day_start_equity > 0 else 0.0
         )
-        trades_today = trade_log.count_trades_today()
+        trades_today = trade_log.count_trades_today(log_path=self._log_path, now=now)
 
         # Sector exposure: this symbol's sector plus every OTHER held
         # position sharing it, valued at whatever prices the caller gave us.
@@ -146,13 +160,14 @@ class PaperBroker:
             trade_log.record(
                 "veto", symbol, quantity, price, paper=True, reason=decision["reason"],
                 extra={"seat": "risk_vetoer", "checks": decision["checks"], "detail": decision["detail"]},
+                log_path=self._log_path,
             )
             raise TradeError(f"Risk vetoer blocked this trade: {decision['reason']}")
 
     # --- orders ------------------------------------------------------------
     def buy(self, symbol: str, quantity: float, price: float, reason: str = "",
             prices: dict[str, float] | None = None, atr_pct: float | None = None,
-            sector_map: dict[str, str] | None = None) -> dict:
+            sector_map: dict[str, str] | None = None, now: datetime | None = None) -> dict:
         """prices: optional {symbol: price} for every other held position, so
         the risk vetoer can value the whole account accurately. Omit and only
         this symbol's position is valued precisely; others fall back to 0.
@@ -162,12 +177,14 @@ class PaperBroker:
         sector_map: optional {symbol: sector} covering this symbol and every
         other held position, from execution.robinhood.get_sectors() — lets
         the vetoer catch sector-level concentration across symbols. Omit to
-        skip the sector-concentration check entirely."""
+        skip the sector-concentration check entirely.
+        now: see _check_risk()'s docstring — for a backtest replaying a
+        simulated date. Defaults to the real wall clock."""
         symbol = symbol.upper()
         if quantity <= 0:
             raise TradeError("Quantity must be positive.")
         fill = _fill_price(price, "buy")
-        self._check_risk(symbol, "buy", quantity, fill, prices, atr_pct, sector_map)
+        self._check_risk(symbol, "buy", quantity, fill, prices, atr_pct, sector_map, now=now)
 
         cost = quantity * fill + config.FLAT_FEE_USD
         if cost > self.cash:
@@ -187,11 +204,11 @@ class PaperBroker:
                                 extra={
                                     "quoted_price": price, "cost": cost, "cash_after": self.cash,
                                     "cost_basis_after": round(self.cost_basis[symbol], 4),
-                                })
+                                }, log_path=self._log_path)
 
     def sell(self, symbol: str, quantity: float, price: float, reason: str = "",
-             prices: dict[str, float] | None = None) -> dict:
-        """See buy() for `prices`. Note: the vetoer's position-concentration
+             prices: dict[str, float] | None = None, now: datetime | None = None) -> dict:
+        """See buy() for `prices` and `now`. Note: the vetoer's position-concentration
         check and drawdown breaker never block a sell (selling only reduces
         exposure), but its per-trade dollar cap still applies — a single sell
         larger than MAX_TRADE_USD is blocked same as a buy. For manually
@@ -211,7 +228,7 @@ class PaperBroker:
         if quantity > held:
             raise TradeError(f"Can't sell {quantity} {symbol}; only hold {held}.")
         fill = _fill_price(price, "sell")
-        self._check_risk(symbol, "sell", quantity, fill, prices, atr_pct=None)
+        self._check_risk(symbol, "sell", quantity, fill, prices, atr_pct=None, now=now)
 
         proceeds = quantity * fill - config.FLAT_FEE_USD
         entry_price = self.cost_basis.get(symbol)
@@ -227,7 +244,7 @@ class PaperBroker:
                                 extra={
                                     "quoted_price": price, "proceeds": proceeds, "cash_after": self.cash,
                                     "entry_price": entry_price, "realized_pnl": realized_pnl,
-                                })
+                                }, log_path=self._log_path)
 
     # --- account view ------------------------------------------------------
     def account(self, prices: dict[str, float] | None = None) -> dict:

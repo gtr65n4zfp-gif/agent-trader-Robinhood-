@@ -21,9 +21,17 @@ def record(
     paper: bool,
     reason: str = "",
     extra: dict | None = None,
+    log_path: str | None = None,
 ) -> dict:
-    """Append a trade record and return it."""
-    os.makedirs(config.LOG_DIR, exist_ok=True)
+    """Append a trade record and return it.
+
+    log_path: override the default shared log (logs/trades.jsonl). Almost
+    nothing should pass this — it exists so an isolated caller (e.g. a
+    backtest run, see backtest/engine.py) can keep its own audit trail
+    completely separate from the live one, the same isolation reasoning as
+    PaperBroker.__init__'s portfolio_path."""
+    path = log_path or _LOG_PATH
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "mode": "paper" if paper else "LIVE",
@@ -35,31 +43,36 @@ def record(
     }
     if extra:
         entry.update(extra)
-    with open(_LOG_PATH, "a") as f:
+    with open(path, "a") as f:
         f.write(json.dumps(entry) + "\n")
     return entry
 
 
-def read_all() -> list[dict]:
-    """Return every logged trade (newest last)."""
-    if not os.path.exists(_LOG_PATH):
+def read_all(log_path: str | None = None) -> list[dict]:
+    """Return every logged trade (newest last). log_path: see record()."""
+    path = log_path or _LOG_PATH
+    if not os.path.exists(path):
         return []
-    with open(_LOG_PATH) as f:
+    with open(path) as f:
         return [json.loads(line) for line in f if line.strip()]
 
 
-def count_trades_today() -> int:
+def count_trades_today(log_path: str | None = None, now: datetime | None = None) -> int:
     """How many paper buys/sells have actually executed today (UTC calendar
     day) — vetoes and other non-fills don't count. Used by the risk
-    vetoer's daily trade-frequency circuit breaker."""
-    today = datetime.now(timezone.utc).date().isoformat()
+    vetoer's daily trade-frequency circuit breaker.
+
+    log_path: see record(). now: for testing, and for a backtest replaying
+    a simulated past date — see PaperBroker's own now parameter, which
+    this is threaded from; defaults to the real wall clock."""
+    today = (now or datetime.now(timezone.utc)).date().isoformat()
     return sum(
-        1 for e in read_all()
+        1 for e in read_all(log_path)
         if e["mode"] == "paper" and e["action"] in ("buy", "sell") and e["timestamp"].startswith(today)
     )
 
 
-def round_trip_stats() -> dict:
+def round_trip_stats(log_path: str | None = None) -> dict:
     """
     The correct definition of the Milestone 5 go-live counter (see
     README's go-live gate): an OPEN alone proves nothing — only a CLOSE
@@ -73,10 +86,12 @@ def round_trip_stats() -> dict:
     existed) is a real fill but not a countable round-trip, and is
     excluded rather than treated as a zero.
 
+    log_path: see record().
+
     Returns {count, total_realized_pnl, wins, losses}.
     """
     closes = [
-        e for e in read_all()
+        e for e in read_all(log_path)
         if e["mode"] == "paper" and e["action"] == "sell" and e.get("realized_pnl") is not None
     ]
     total = sum(e["realized_pnl"] for e in closes)
