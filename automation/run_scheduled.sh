@@ -39,6 +39,16 @@ set -uo pipefail  # deliberately NOT -e: failures are caught and logged below, n
 # found and the job fails before it even starts logging.
 export PATH="/Users/ethandungo/.local/bin:/Library/Frameworks/Python.framework/Versions/3.14/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
+# On battery, macOS drops into real Sleep within minutes of a launchd job
+# starting (confirmed via `pmset -g log`: the 2026-07-15 run's launchd job
+# fired, the Mac slept twice in the first 6 minutes including one ~17min
+# sleep, and `claude -p`'s HTTPS connection to the API was severed mid-run
+# — "Connection closed mid-response", no completion marker, run failed).
+# `caffeinate -i` (not `-s`, which is AC-power-only) holds a
+# PreventUserIdleSystemSleep assertion for exactly the wrapped command's
+# lifetime and releases it automatically on exit.
+CAFFEINATE=(caffeinate -i)
+
 PROJECT_DIR="/Users/ethandungo/agent-trader"
 LOG_FILE="$PROJECT_DIR/logs/automation_runs.log"
 RUN_LOG_DIR="$PROJECT_DIR/logs/automation_runs"
@@ -126,7 +136,7 @@ PROMPT_EOF
 PROMPT=$(cat "$PROMPT_FILE")
 rm -f "$PROMPT_FILE"
 
-OUTPUT=$(claude -p "$PROMPT" \
+OUTPUT=$("${CAFFEINATE[@]}" claude -p "$PROMPT" \
   --allowedTools "Bash(python3 *) mcp__robinhood-trading__get_equity_quotes mcp__robinhood-trading__get_equity_technical_indicators mcp__robinhood-trading__get_equity_fundamentals mcp__robinhood-trading__get_accounts" \
   --output-format text 2>&1)
 EXIT_CODE=$?
