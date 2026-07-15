@@ -33,9 +33,16 @@ from research import sec_client
 # fallback, a company like that shows a stale multi-year-old "latest"
 # revenue figure with no warning. Each entry here is a list of candidate
 # tags, tried in order, keeping whichever has the most recent data point.
+#
+# NetIncomeLoss has the same trap, found the hard way: CAT stopped
+# reporting under the exact "NetIncomeLoss" tag after 2011-Q3 (switched to
+# "ProfitLoss" for continuous ongoing reporting) — without this fallback,
+# every as_of query for CAT silently returned a frozen 2011 figure with no
+# warning, exactly the failure mode this whole fallback pattern exists to
+# prevent. Caught via a spot-check during backtesting, not by inspection.
 _CONCEPTS: dict[str, list[str]] = {
     "Revenues": ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues"],
-    "NetIncomeLoss": ["NetIncomeLoss"],
+    "NetIncomeLoss": ["NetIncomeLoss", "ProfitLoss"],
     "Assets": ["Assets"],
     "StockholdersEquity": ["StockholdersEquity"],
 }
