@@ -147,7 +147,7 @@ REGIME_EMA_LOOKBACK_DAYS: int = 20
 # is a starting set of liquid large-caps spanning sectors (tech, financials,
 # healthcare, consumer staples, energy, industrials), not a permanent choice.
 # See agents/AUTOMATION_DESIGN.md.
-WATCHLIST: list[str] = ["AAPL", "MSFT", "GOOGL", "JPM", "JNJ", "WMT", "XOM", "CAT"]
+WATCHLIST: list[str] = ["AAPL", "MSFT", "GOOGL", "JPM", "JNJ", "NBIS", "NVDA", "TSLA"]
 
 # Intended cadence: once per US trading day, mid-morning ET (~10:00) —
 # comfortably inside regular hours so market_is_open() below reads True on
