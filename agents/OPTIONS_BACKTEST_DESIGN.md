@@ -126,6 +126,12 @@ policy choice, same pattern as `config.py`'s own `SLIPPAGE_BPS` comment —
 not calibrated against data, a placeholder to revisit once real numbers
 exist.
 
+**Decided: 3% round-trip on premium** (i.e. ~1.5% against the trader on
+each of entry and exit). Not arbitrary — SPY options are the most liquid
+options market that exists, so this approximates a realistic ATM SPY
+spread rather than being conservative for its own sake. Deliberately not
+tuned lower just to flatter the backtest's results.
+
 ## Output / metrics
 
 Reuses `backtest/metrics.py`'s existing conventions where they apply:
@@ -164,12 +170,15 @@ Reuses `backtest/metrics.py`'s existing conventions where they apply:
   moneyness (slightly OTM for cheaper premium/more leverage) is a natural
   follow-up experiment once the basic harness works.
 
-## Open questions for input before building
+## Decisions locked in
 
-1. **Cost haircut size** — no data to calibrate from; proposing a
-   placeholder (e.g. 3-5% round-trip on premium) unless there's a
-   preferred starting number.
-2. **How far back to actually pull** — pending confirmation of real data
-   depth, how much history is "enough" to trust the win rate's confidence
-   interval (a ~20-30 trade sample, per the equity backtest's own
-   precedent, is a reasonable floor).
+1. **Cost haircut: 3% round-trip on premium** (see "Cost modeling" above).
+2. **History window: the full ~1 year of confirmed data depth**, not a
+   shorter slice — the council's gate is deliberately restrictive
+   (regime filter + conjunctive agreement, or its technicals+regime-only
+   equivalent for SPY), so signal count for a single symbol will already
+   be thin. Only extend further back than 1 year if this comes back under
+   ~20 trades, which per the equity backtest's own precedent is the floor
+   for a win-rate confidence interval worth trusting.
+
+No open questions remain — ready for an implementation plan.
