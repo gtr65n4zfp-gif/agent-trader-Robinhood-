@@ -55,23 +55,22 @@ The engine reuses `backtest/data.py` and the existing seat functions
 currently in `config.WATCHLIST`, so this is a standalone symbol run, not
 a change to the live watchlist.
 
-**Open question, flagged rather than silently decided:** SPY is an ETF
-(SPDR S&P 500 Trust), not an operating company. `fundamentals_seat.
-build_brief()` pulls SEC XBRL concept data (`Revenues`, `NetIncomeLoss`,
-`Assets`, `StockholdersEquity`) — tags built for 10-K/10-Q filers. An ETF
-trust does not file the same way and likely has none of these concepts
-populated under its CIK. If `build_brief()` comes back empty/unusable for
-SPY (expected, not yet confirmed), the conjunctive gate (`judge.decide()`
-requires Fundamentals AND Technicals to agree) would either never fire or
-fire on a degenerate always-neutral Fundamentals leg.
+**Confirmed, not just predicted:** `build_brief("SPY")` resolves to a real
+CIK (`0000884394`, SPDR S&P 500 ETF Trust) but every concept comes back
+`null` — `Revenues`, `NetIncomeLoss`, `Assets`, `StockholdersEquity` — and
+`recent_filings` is empty. An ETF trust doesn't file the 10-K/10-Q reports
+those XBRL tags come from, so there's structurally nothing there. The
+conjunctive gate (`judge.decide()` requires Fundamentals AND Technicals to
+agree) would see a permanently neutral, zero-confidence Fundamentals leg
+for SPY — meaning it would never fire, since `aligned` requires
+`f_stance in ("bullish", "bearish")`.
 
-**Proposed default:** if SPY's Fundamentals brief is confirmed empty, this
-backtest uses `agents.technicals.build_view()` + `agents.regime.
-regime_stance()` only, and calls `judge.decide()` with a neutral/skipped
-Fundamentals input — an explicit, isolated exception for this SPY-only
-experiment, not a change to `judge.py` itself or to how any other symbol
-is evaluated. Needs a first real `build_brief("SPY")` call to confirm the
-premise before committing to this — first task, before any engine code.
+**Decided:** this backtest uses `agents.technicals.build_view()` +
+`agents.regime.regime_stance()` only for SPY, and calls `judge.decide()`
+with Fundamentals omitted from the alignment check (a neutral stub, or a
+small `judge`-level allowance for "technicals-only" symbols) — an
+explicit, isolated exception for this SPY-only experiment, not a change to
+`judge.py`'s behavior for any other symbol or to the live watchlist.
 
 ## Contract selection (per historical BUY/SELL signal)
 
@@ -156,22 +155,21 @@ Reuses `backtest/metrics.py`'s existing conventions where they apply:
   calibration — same caveat class as `TARGET_DAILY_VOL_PCT` vs.
   `MIN_VOL_SCALAR` in `config.py` (one is derived from data, the other is
   policy).
-- SPY's Fundamentals leg may be structurally unusable (see "Signal
-  source" above) — this needs to be confirmed, not assumed, before the
-  engine is built around a particular fallback.
+- SPY's Fundamentals leg is confirmed structurally unusable (see "Signal
+  source" above) — the technicals+regime-only fallback is a real
+  deviation from how every other symbol is evaluated, worth remembering
+  when comparing SPY options results back to the equity backtest's
+  numbers, which do use the full three-seat gate.
 - ATM strike selection is a v1 default, not a conclusion — different
   moneyness (slightly OTM for cheaper premium/more leverage) is a natural
   follow-up experiment once the basic harness works.
 
 ## Open questions for input before building
 
-1. **SPY Fundamentals fallback** — confirm `build_brief("SPY")` actually
-   comes back empty before committing to the Technicals+Regime-only
-   default proposed above.
-2. **Cost haircut size** — no data to calibrate from; proposing a
+1. **Cost haircut size** — no data to calibrate from; proposing a
    placeholder (e.g. 3-5% round-trip on premium) unless there's a
    preferred starting number.
-3. **How far back to actually pull** — pending confirmation of real data
+2. **How far back to actually pull** — pending confirmation of real data
    depth, how much history is "enough" to trust the win rate's confidence
    interval (a ~20-30 trade sample, per the equity backtest's own
    precedent, is a reasonable floor).
