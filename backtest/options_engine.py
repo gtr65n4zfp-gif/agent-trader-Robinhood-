@@ -94,10 +94,11 @@ def simulate_option_trade(
     "Entry and exit simulation" section).
 
     Returns {entry_fill, exit_fill, exit_reason, exit_date, realized_pnl}.
-    realized_pnl is per ONE contract, in dollars (already multiplied by
-    config.OPTIONS_CONTRACT_MULTIPLIER-equivalent — caller passes that
-    multiplier's actual value baked into how it reads this result, or see
-    run_options_backtest.py for the exact usage).
+    realized_pnl is a raw PER-SHARE premium delta (exit_fill - entry_fill),
+    NOT yet multiplied by config.OPTIONS_CONTRACT_MULTIPLIER — the caller
+    is responsible for applying that multiplier to get a per-contract
+    dollar P&L (one contract = 100 shares of premium), same as how a real
+    options quote is priced per share but settles per contract.
     """
     entry_fill = entry_close * (1 + haircut_pct / 2)
 

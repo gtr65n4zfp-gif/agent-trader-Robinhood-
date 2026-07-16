@@ -740,9 +740,12 @@ def run_one_signal(signal: dict) -> dict | None:
         "raw_historicals": dict,          # get_option_historicals() raw response for the selected contract
     }
 
-    Returns simulate_option_trade() output, or None if no usable contract
-    or bar data was found — the caller skips this signal, same fail-safe
-    convention as everywhere else in this project. Never guesses a
+    Returns simulate_option_trade() output with realized_pnl scaled to
+    per-contract dollars (config.OPTIONS_CONTRACT_MULTIPLIER applied here,
+    not inside simulate_option_trade() — see that function's docstring),
+    or None if no usable contract or bar data was found — the caller
+    skips this signal, same fail-safe convention as everywhere else in
+    this project. Never guesses a
     substitute contract or a fabricated price.
 
     NOTE on options_data.parse_option_bars(): it raises ValueError if
@@ -775,7 +778,7 @@ def run_one_signal(signal: dict) -> dict | None:
 
     bars_after_entry = [b for b in bars if b["date"] > signal["date"]]
 
-    return options_engine.simulate_option_trade(
+    trade = options_engine.simulate_option_trade(
         entry_close=entry_bar["close"],
         bars_after_entry=bars_after_entry,
         side=signal["side"],
@@ -786,6 +789,13 @@ def run_one_signal(signal: dict) -> dict | None:
         take_profit_pct=config.OPTIONS_TAKE_PROFIT_PCT,
         haircut_pct=config.OPTIONS_ROUNDTRIP_HAIRCUT_PCT,
     )
+    # simulate_option_trade() returns realized_pnl as a raw PER-SHARE
+    # premium delta (see its own docstring) — this is the seam where that
+    # gets scaled to actual per-contract dollars. entry_fill/exit_fill stay
+    # unscaled (they're genuinely per-share quoted prices; only P&L is a
+    # settled dollar amount).
+    trade["realized_pnl"] = round(trade["realized_pnl"] * config.OPTIONS_CONTRACT_MULTIPLIER, 2)
+    return trade
 
 
 if __name__ == "__main__":
