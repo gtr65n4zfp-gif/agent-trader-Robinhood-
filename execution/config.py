@@ -199,4 +199,28 @@ MAX_QUOTE_AGE_MINUTES: float = 30.0
 # Never the default; never flipped as a side effect of something else.
 AUTOMATION_DRY_RUN: bool = True
 
+# --- Options backtest (backtest/options_engine.py) --------------------------
+# See agents/OPTIONS_BACKTEST_DESIGN.md. Separate from STOP_LOSS_PCT/
+# TAKE_PROFIT_PCT above: options move far more than the underlying share
+# price, so reusing the equity thresholds directly on premium would be a
+# real modeling error, not just imprecision — same reasoning
+# CONVICTION_DROP_THRESHOLD's own comment already gives for keeping
+# entry/exit conviction bars independently tunable. Policy choices, not
+# derived from data, same caveat class as MIN_VOL_SCALAR above.
+OPTIONS_STOP_LOSS_PCT: float = 0.50     # close if premium falls 50% from entry
+OPTIONS_TAKE_PROFIT_PCT: float = 1.00   # close if premium doubles from entry
+
+# Robinhood's option historicals carry no bid/ask or volume (confirmed
+# directly — see agents/OPTIONS_BACKTEST_DESIGN.md's "Data feasibility"),
+# so there's no real spread to derive a cost model from. 3% round-trip is
+# a deliberate, stated approximation of a realistic ATM SPY spread — SPY
+# options are the most liquid options market that exists, so this isn't
+# arbitrary conservatism. Applied as half against the trader on entry,
+# half on exit.
+OPTIONS_ROUNDTRIP_HAIRCUT_PCT: float = 0.03
+
+# Standard US equity/ETF option contract size — one contract controls 100
+# shares, so premium P&L per contract is (exit - entry) * this.
+OPTIONS_CONTRACT_MULTIPLIER: float = 100.0
+
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")

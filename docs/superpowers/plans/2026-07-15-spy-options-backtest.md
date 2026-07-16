@@ -740,17 +740,35 @@ def run_one_signal(signal: dict) -> dict | None:
         "raw_historicals": dict,          # get_option_historicals() raw response for the selected contract
     }
 
-    Returns simulate_option_trade() output, or None if no usable contract
-    or bar data was found — the caller skips this signal, same fail-safe
-    convention as everywhere else in this project. Never guesses a
+    Returns simulate_option_trade() output with realized_pnl scaled to
+    per-contract dollars (config.OPTIONS_CONTRACT_MULTIPLIER applied here,
+    not inside simulate_option_trade() — see that function's docstring),
+    or None if no usable contract or bar data was found — the caller
+    skips this signal, same fail-safe convention as everywhere else in
+    this project. Never guesses a
     substitute contract or a fabricated price.
+
+    NOTE on options_data.parse_option_bars(): it raises ValueError if
+    contract["id"] isn't found in signal["raw_historicals"]'s results —
+    deliberately, matching backtest/data.py's parse_bars() precedent, so a
+    genuine caller-wiring bug (fetching the wrong contract's historicals)
+    fails loudly rather than silently. But a contract Robinhood genuinely
+    has zero historical bars for (common for thin/never-traded strikes) is
+    NOT a bug — it's a normal "skip this signal" case per this plan's
+    Global Constraints. This function is the seam where that distinction
+    gets drawn: catch the exception here, at the orchestration layer,
+    rather than changing parse_option_bars() itself (resolved as a Task 1
+    reviewer finding — see the plan's task-1-report.md if it still exists).
     """
     instruments = options_data.parse_option_instruments(signal["raw_instruments"])
     contract = options_data.select_contract(signal["spot"], signal["side"], instruments)
     if contract is None:
         return None
 
-    bars = options_data.parse_option_bars(signal["raw_historicals"], contract["id"])
+    try:
+        bars = options_data.parse_option_bars(signal["raw_historicals"], contract["id"])
+    except ValueError:
+        return None
     if not bars:
         return None
 
@@ -760,7 +778,7 @@ def run_one_signal(signal: dict) -> dict | None:
 
     bars_after_entry = [b for b in bars if b["date"] > signal["date"]]
 
-    return options_engine.simulate_option_trade(
+    trade = options_engine.simulate_option_trade(
         entry_close=entry_bar["close"],
         bars_after_entry=bars_after_entry,
         side=signal["side"],
@@ -771,6 +789,13 @@ def run_one_signal(signal: dict) -> dict | None:
         take_profit_pct=config.OPTIONS_TAKE_PROFIT_PCT,
         haircut_pct=config.OPTIONS_ROUNDTRIP_HAIRCUT_PCT,
     )
+    # simulate_option_trade() returns realized_pnl as a raw PER-SHARE
+    # premium delta (see its own docstring) — this is the seam where that
+    # gets scaled to actual per-contract dollars. entry_fill/exit_fill stay
+    # unscaled (they're genuinely per-share quoted prices; only P&L is a
+    # settled dollar amount).
+    trade["realized_pnl"] = round(trade["realized_pnl"] * config.OPTIONS_CONTRACT_MULTIPLIER, 2)
+    return trade
 
 
 if __name__ == "__main__":
@@ -820,6 +845,15 @@ if __name__ == "__main__":
     signal_missing_entry = dict(signal, date="2026-01-05")
     assert run_one_signal(signal_missing_entry) is None
     print("PASS — no bar on the entry date returns None, never fabricates an entry price.")
+
+    print("\nTesting run_one_signal — contract has zero historical bars anywhere (skip, not crash)...")
+    signal_no_historicals = dict(signal)
+    signal_no_historicals["raw_historicals"] = {
+        "data": {"results": [{"instrument_id": "some-other-contract-id", "bars": []}]}
+    }
+    assert run_one_signal(signal_no_historicals) is None
+    print("PASS — options_data.parse_option_bars()'s ValueError (instrument_id not in results) "
+          "is caught here and treated as a skip, not an unhandled crash.")
 ```
 
 - [ ] **Step 2: Run it to verify all tests pass**
@@ -835,6 +869,9 @@ PASS — bearish signal with no put available returns None, not a crash or a sub
 
 Testing run_one_signal — entry date missing from bars (skip, not crash)...
 PASS — no bar on the entry date returns None, never fabricates an entry price.
+
+Testing run_one_signal — contract has zero historical bars anywhere (skip, not crash)...
+PASS — options_data.parse_option_bars()'s ValueError (instrument_id not in results) is caught here and treated as a skip, not an unhandled crash.
 ```
 
 - [ ] **Step 3: Add `run_backtest` and its self-test**
@@ -872,7 +909,7 @@ Add to the self-test block, after the existing `run_one_signal` tests:
 - [ ] **Step 4: Run it to verify all tests pass**
 
 Run: `python3 -m backtest.run_options_backtest`
-Expected: the three prior PASS lines, plus one more confirming `run_backtest`'s aggregation (4 total).
+Expected: the four prior PASS lines, plus one more confirming `run_backtest`'s aggregation (5 total).
 
 - [ ] **Step 5: Commit**
 
