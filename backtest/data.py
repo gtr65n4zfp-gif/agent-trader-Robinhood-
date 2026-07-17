@@ -140,6 +140,18 @@ def atr_series(bars: list[dict], period: int = 14) -> list[float | None]:
     return out
 
 
+def recent_return_series(closes: list[float], period: int = 5) -> list[float | None]:
+    """Trailing N-day simple return: (close[i] - close[i - period]) / close[i - period].
+    None for every index before `period` prior closes exist -- same
+    None-padding convention as ema_series()/rsi_series()/atr_series() above."""
+    n = len(closes)
+    out: list[float | None] = [None] * n
+    for i in range(period, n):
+        prev = closes[i - period]
+        out[i] = (closes[i] - prev) / prev if prev else None
+    return out
+
+
 # --- Council-ready bundle --------------------------------------------------
 
 
@@ -170,8 +182,9 @@ def technicals_as_of(symbol: str, as_of: str, bars: list[dict], regime_ema_perio
     rsi14 = rsi_series(closes, 14)[-1]
     atr14 = atr_series(truncated, 14)[-1]
     regime_ema = ema_series(closes, regime_ema_period)[-1]
+    recent_5d_return = recent_return_series(closes, 5)[-1]
 
-    if None in (ema9, rsi14, atr14, regime_ema):
+    if None in (ema9, rsi14, atr14, regime_ema, recent_5d_return):
         return None  # not enough warm-up history yet for this date
 
     return {
@@ -180,6 +193,7 @@ def technicals_as_of(symbol: str, as_of: str, bars: list[dict], regime_ema_perio
         "rsi": rsi14,
         "atr_pct": atr14 / price,
         "regime_ema": regime_ema,
+        "recent_5d_return": recent_5d_return,
     }
 
 
@@ -215,3 +229,30 @@ def council_bundle_for(symbol: str, as_of: str, bars: list[dict], regime_ema_per
     if tech is None:
         return None
     return {**tech, "fundamentals_verdict": fundamentals_verdict}
+
+
+if __name__ == "__main__":
+    from datetime import date, timedelta
+
+    print("Testing recent_return_series...")
+    closes = [100.0, 101.0, 102.0, 103.0, 104.0, 110.0, 111.0]
+    returns = recent_return_series(closes, period=5)
+    assert returns[:5] == [None, None, None, None, None], returns
+    assert abs(returns[5] - (110.0 - 100.0) / 100.0) < 1e-9, returns
+    assert abs(returns[6] - (111.0 - 101.0) / 101.0) < 1e-9, returns
+    print(f"PASS -- 5-day trailing return computed correctly, None-padded before warm-up: {returns}")
+
+    print("\nTesting technicals_as_of includes recent_5d_return...")
+    start = date(2026, 1, 1)
+    bars = []
+    price = 100.0
+    for i in range(30):
+        d = (start + timedelta(days=i)).strftime("%Y-%m-%d")
+        price += 0.5
+        bars.append({"date": d, "open": price, "high": price + 0.2, "low": price - 0.2, "close": price, "volume": 1000})
+    as_of = bars[-1]["date"]
+    result = technicals_as_of("SPY", as_of, bars, regime_ema_period=20)
+    assert result is not None, "expected a full bundle once warm-up is satisfied"
+    assert "recent_5d_return" in result, result
+    assert result["recent_5d_return"] > 0, result  # steadily rising prices -> positive 5d return
+    print(f"PASS -- technicals_as_of() bundle now includes recent_5d_return: {result['recent_5d_return']:.4f}")
