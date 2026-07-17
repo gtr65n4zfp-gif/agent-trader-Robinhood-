@@ -11,6 +11,8 @@ session and passes the raw JSON straight through.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 
 def parse_option_instruments(raw: dict) -> list[dict]:
     """
@@ -72,6 +74,117 @@ def nearest_expiration(target_date: str, available_expirations: list[str]) -> st
     """
     candidates = sorted(d for d in available_expirations if d >= target_date)
     return candidates[0] if candidates else None
+
+
+def _is_third_friday(d: datetime) -> bool:
+    """The standard monthly-options expiration convention: the third
+    Friday of the month (weekday() == 4, day-of-month in [15, 21])."""
+    return d.weekday() == 4 and 15 <= d.day <= 21
+
+
+def liquid_expirations_between(start_date: str, end_date: str) -> list[str]:
+    """
+    Every Friday (inclusive) in [start_date, end_date] as "YYYY-MM-DD"
+    strings, sorted — the set of genuinely liquid SPY expirations. This
+    deliberately EXCLUDES Monday/Wednesday weeklies: those trade so thin
+    at a multi-week lead time that a naive "nearest available expiration"
+    snap (this backtest's original v1 approach) would pick one that
+    barely has any real trading history yet on the signal date, which is
+    exactly what caused most of the 30-45 day horizon's skips in the
+    first run (see agents/OPTIONS_BACKTEST_RESULTS.md). The monthly,
+    third-Friday expiration is a Friday too, so it's already included
+    here — select_liquid_expiration() is what prefers it specifically.
+    """
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+    # Fridays repeat every 7 days — walk forward from the first Friday
+    # on or after start_date.
+    offset = (4 - start.weekday()) % 7
+    d = start + timedelta(days=offset)
+    out = []
+    while d <= end:
+        out.append(d.strftime("%Y-%m-%d"))
+        d += timedelta(days=7)
+    return out
+
+
+def select_liquid_expiration(signal_date: str, horizon_days: int, search_window_days: int = 10) -> str | None:
+    """
+    Pick the expiration to target `horizon_days` out from `signal_date`,
+    restricted to liquid Friday expirations (see
+    liquid_expirations_between()'s docstring for why). Within the
+    qualifying window [target, target + search_window_days], the monthly
+    (third-Friday) expiration is preferred if one falls in range — it's
+    the most liquid, highest-open-interest contract available — otherwise
+    the earliest weekly Friday >= target is used. Mirrors
+    nearest_expiration()'s own "earliest that gives AT LEAST the intended
+    holding period, never less" principle, just restricted to a liquid
+    candidate set instead of every listed date.
+
+    Returns None only if no Friday falls in the search window at all
+    (shouldn't happen in practice — Fridays recur every 7 days — but kept
+    as an explicit non-guess rather than assuming one exists).
+    """
+    target = (datetime.strptime(signal_date, "%Y-%m-%d") + timedelta(days=horizon_days)).strftime("%Y-%m-%d")
+    window_end = (datetime.strptime(target, "%Y-%m-%d") + timedelta(days=search_window_days)).strftime("%Y-%m-%d")
+    candidates = liquid_expirations_between(target, window_end)
+    if not candidates:
+        return None
+
+    monthlies = [c for c in candidates if _is_third_friday(datetime.strptime(c, "%Y-%m-%d"))]
+    return monthlies[0] if monthlies else candidates[0]
+
+
+def verify_listed_as_of(raw_reference: dict) -> bool:
+    """
+    True if a specific contract was already listed as of a specific date —
+    parses an already-fetched Polygon `/v3/reference/options/contracts`
+    response (agent-mediated, same convention as this module's other
+    parsers: the actual HTTP call is made by whatever session drives a
+    real historical run, this function only reads the JSON it returns).
+    Call it with that endpoint's `as_of=<signal_date>` param already
+    applied to `raw_reference` — Polygon excludes contracts not yet
+    listed (or no longer active) as of that date, so a non-empty
+    `results` list IS the point-in-time listing proof. This is the check
+    that was previously MISSING: selecting a contract by its (retrospective,
+    state="expired") existence alone doesn't prove it was tradeable back
+    on the actual signal date — using it without this check is a
+    lookahead violation.
+    """
+    return bool(raw_reference.get("results"))
+
+
+def estimate_haircut_pct(entry_bar: dict, floor_pct: float, vol_multiplier: float = 0.25,
+                          ceiling_pct: float = 0.15) -> float:
+    """
+    A documented ESTIMATE of the round-trip bid-ask cost for one trade,
+    used in place of a flat constant — real NBBO/quote data isn't
+    available (Polygon's `/v3/quotes`, `/v2/last/nbbo`, and
+    `/v3/snapshot/options` all returned 403 Not Authorized on the current
+    plan, confirmed directly, not assumed).
+
+    Uses the entry bar's own high-low range as a real, point-in-time
+    (not fabricated, not lookahead — it's the entry day's own public
+    trading data) signal of that day's trading friction: wider daily
+    range implies a wider realistic spread. `floor_pct` keeps this from
+    ever going BELOW the flat baseline this project already uses for the
+    calmest, most liquid case (config.OPTIONS_ROUNDTRIP_HAIRCUT_PCT) —
+    this can only widen the assumption, never tighten it.
+    `vol_multiplier` and `ceiling_pct` are stated policy choices (0.25 and
+    15%), not fitted to any result — chosen before this pass's backtest
+    was re-run, same as every other cost assumption in this project.
+
+    Known simplification: uses only the ENTRY bar's range for the whole
+    trade (both entry and exit fills) rather than each leg's own day —
+    simulate_option_trade() doesn't know the exit day until it's inside
+    the walk-forward loop, and changing that function's shape to plumb a
+    per-day callback through wasn't worth the added surface for this
+    pass. Documented here, not hidden.
+    """
+    if entry_bar["close"] <= 0:
+        return floor_pct
+    day_range_pct = (entry_bar["high"] - entry_bar["low"]) / entry_bar["close"]
+    return min(ceiling_pct, max(floor_pct, vol_multiplier * day_range_pct))
 
 
 def select_contract(spot: float, side: str, instruments: list[dict]) -> dict | None:
@@ -177,3 +290,43 @@ if __name__ == "__main__":
 
     assert select_contract(618.5, "sell", instruments[:3]) is None
     print("PASS — no put available returns None, not a fallback to a call.")
+
+    print("\nTesting liquid_expirations_between...")
+    fridays = liquid_expirations_between("2026-05-01", "2026-05-31")
+    assert fridays == ["2026-05-01", "2026-05-08", "2026-05-15", "2026-05-22", "2026-05-29"], fridays
+    print(f"PASS — every Friday in May 2026, no Mon/Wed weeklies: {fridays}")
+
+    print("\nTesting select_liquid_expiration — prefers the monthly third Friday when in range...")
+    # 2026-04-09 + 30 days = 2026-05-09; window [2026-05-09, 2026-05-19] contains
+    # both 2026-05-15 (the third Friday / monthly) and 2026-05-08 is NOT in range
+    # (before the target), so the only weekly candidate is 2026-05-22-adjacent —
+    # the monthly at 2026-05-15 should win.
+    exp = select_liquid_expiration("2026-04-09", horizon_days=30)
+    assert exp == "2026-05-15", exp
+    print(f"PASS — monthly (third Friday) preferred over a plain weekly: {exp}")
+    assert exp != "2026-05-11", "must never select a Monday weekly"
+    print("PASS — never lands on the thin Monday weekly (2026-05-11) that caused the original skips.")
+
+    print("\nTesting select_liquid_expiration — 7-day horizon falls back to the nearest weekly Friday...")
+    exp7 = select_liquid_expiration("2026-04-09", horizon_days=7)
+    assert datetime.strptime(exp7, "%Y-%m-%d").weekday() == 4, exp7
+    assert exp7 >= "2026-04-16", exp7
+    print(f"PASS — nearest qualifying weekly Friday, never a Mon/Wed weekly: {exp7}")
+
+    print("\nTesting verify_listed_as_of...")
+    assert verify_listed_as_of({"results": [{"ticker": "O:SPY260515C00700000"}]}) is True
+    assert verify_listed_as_of({"results": []}) is False
+    assert verify_listed_as_of({"status": "OK"}) is False  # no "results" key at all
+    print("PASS — listed iff Polygon's as_of-filtered reference response has a non-empty results list.")
+
+    print("\nTesting estimate_haircut_pct...")
+    calm_bar = {"open": 6.0, "high": 6.1, "low": 5.9, "close": 6.0}
+    calm = estimate_haircut_pct(calm_bar, floor_pct=0.03)
+    assert calm == 0.03, calm
+    print(f"PASS — a calm day never goes below the existing flat floor: {calm}")
+
+    wild_bar = {"open": 6.0, "high": 13.0, "low": 5.0, "close": 8.0}
+    wild = estimate_haircut_pct(wild_bar, floor_pct=0.03)
+    assert wild > 0.03, wild  # (13-5)/8 = 1.0 * 0.25 = 0.25, capped at ceiling
+    assert wild == 0.15, wild
+    print(f"PASS — a wild day widens the estimate above the floor, capped at the ceiling: {wild}")

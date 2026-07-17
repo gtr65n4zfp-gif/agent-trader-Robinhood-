@@ -24,7 +24,8 @@ def run_one_signal(signal: dict) -> dict | None:
         "date": "YYYY-MM-DD",             # entry/signal date
         "side": "buy" | "sell",           # from technicals_only_decision()'s action
         "spot": float,                    # SPY close on `date`
-        "expiration_date": "YYYY-MM-DD",  # already resolved via options_data.nearest_expiration()
+        "expiration_date": "YYYY-MM-DD",  # already resolved via options_data.select_liquid_expiration()
+                                           # and point-in-time-verified via options_data.verify_listed_as_of()
         "spot_at_expiration": float,      # SPY close on expiration_date
         "raw_instruments": dict,          # get_option_instruments() raw response for expiration_date
         "raw_historicals": dict,          # get_option_historicals() raw response for the selected contract
@@ -77,7 +78,12 @@ def run_one_signal(signal: dict) -> dict | None:
         spot_at_expiration=signal["spot_at_expiration"],
         stop_loss_pct=config.OPTIONS_STOP_LOSS_PCT,
         take_profit_pct=config.OPTIONS_TAKE_PROFIT_PCT,
-        haircut_pct=config.OPTIONS_ROUNDTRIP_HAIRCUT_PCT,
+        # Real NBBO/quote data isn't available (Polygon's quote endpoints
+        # returned 403 Not Authorized on the current plan) — this widens
+        # the flat config floor using the entry day's own trading range
+        # instead. See options_data.estimate_haircut_pct()'s docstring for
+        # the full reasoning and the stated assumption.
+        haircut_pct=options_data.estimate_haircut_pct(entry_bar, floor_pct=config.OPTIONS_ROUNDTRIP_HAIRCUT_PCT),
     )
     # simulate_option_trade() returns realized_pnl as a raw PER-SHARE
     # premium delta (see its own docstring) — this is the seam where that
@@ -85,22 +91,36 @@ def run_one_signal(signal: dict) -> dict | None:
     # unscaled (they're genuinely per-share quoted prices; only P&L is a
     # settled dollar amount).
     trade["realized_pnl"] = round(trade["realized_pnl"] * config.OPTIONS_CONTRACT_MULTIPLIER, 2)
+    # Carried through so a caller can later line this trade back up against
+    # the underlying's own price on the same two dates (options_metrics.
+    # compare_to_buyhold() needs the entry side of that window; exit_date
+    # is already on the trade from simulate_option_trade()).
+    trade["signal_date"] = signal["date"]
     return trade
 
 
-def run_backtest(signals: list[dict]) -> dict:
+def run_backtest(signals: list[dict], spy_closes: dict[str, float] | None = None) -> dict:
     """
     Runs every signal through run_one_signal(), collects whatever trades
     were actually produced (skipped signals excluded, never guessed), and
     reports options_metrics.summarize_option_trades() over them.
+
+    spy_closes: optional {date: SPY close} map (from backtest/data.parse_bars()
+    or equivalent). When supplied, also reports options_metrics.
+    compare_to_buyhold() against it — the buy-and-hold-SPY-shares baseline
+    agents/OPTIONS_BACKTEST_DESIGN.md's "Output / metrics" section calls
+    for. Omitted (None) skips that comparison rather than guessing a price.
     """
     trades = [t for t in (run_one_signal(s) for s in signals) if t is not None]
-    return {
+    report = {
         "signals_total": len(signals),
         "signals_skipped": len(signals) - len(trades),
         "trades": trades,
         "summary": options_metrics.summarize_option_trades(trades),
     }
+    if spy_closes is not None:
+        report["vs_buyhold"] = options_metrics.compare_to_buyhold(trades, spy_closes)
+    return report
 
 
 if __name__ == "__main__":
