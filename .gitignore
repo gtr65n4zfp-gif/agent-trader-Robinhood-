@@ -16,6 +16,7 @@ logs/*.json
 logs/*.jsonl
 !logs/trades.jsonl
 logs/backtests/
+logs/automation_runs/
 *.sqlite
 
 # OS
