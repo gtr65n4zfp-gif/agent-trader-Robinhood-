@@ -48,7 +48,7 @@ not proven, but a complete, tested path), not `spy_forecast_decision()`
 ## New files
 
 ```
-automation/run_options_pass.py     — daily entrypoint: exit sweep, then entries
+automation/run_options_pass.py     — two-phase daily entrypoint: plan, then execute
 execution/options_paper_broker.py  — OptionsPaperBroker: contracts, not shares
 agents/options_risk_vetoer.py      — dedicated risk gate for options units
 automation/demo_run_options_pass.py — end-to-end proof, mirrors demo_run_pass.py
@@ -199,27 +199,60 @@ rather than left to implementation time:
   the *sum* of both tracks, since they're independent bets by design.
 - `OPTIONS_AUTOMATION_DRY_RUN = True` (mirrors `AUTOMATION_DRY_RUN`).
 
-## Automation entrypoint (`automation/run_options_pass.py`)
+## Automation entrypoint (`automation/run_options_pass.py`) — two phases, not one
 
-Same fail-safe skeleton as `run_pass.py`, single symbol:
+`run_pass.py` works as a single pure function because the price used for
+the equity *decision* is the same price used for the *fill* — everything
+is known upfront from one pre-fetched bundle. Options don't have that
+property: fetching a live quote for the entry contract requires already
+knowing *which contract*, which depends on the decision (buy/sell) and
+the live spot price — both only known partway through the pass. Rather
+than gloss over that dependency, this entrypoint is two pure functions,
+with the calling agent fetching live data between them:
 
-1. `config.assert_paper_mode()` — abort the whole pass if live trading is
-   somehow armed.
-2. Market-hours guard — outside regular hours, logged no-op, nothing
-   else runs.
-3. SPY data-sanity check — bad/stale quote skips the whole pass cleanly.
-4. `OPTIONS_AUTOMATION_DRY_RUN` (default `True`) — every decision still
-   made and logged in full; `OptionsPaperBroker` methods never actually
-   called until deliberately armed.
-5. Exit sweep: for each track with an open position, live quote →
-   compare vs. entry → close on stop-loss / take-profit /
-   expiration-reached. Both tracks checked independently, every pass.
-6. Entries: regime → technicals → `technicals_only_decision()` computed
-   once (shared by both tracks — it's the same underlying signal); then
-   for each track that's currently flat, contract selection for that
-   track's horizon → risk gate → open. A track that already holds a
-   position is skipped for entries that day regardless of what the
-   signal says.
+**Phase A — `plan_options_pass(bundle, broker, now=None) -> dict`**
+
+1. `config.assert_paper_mode()` — abort if live trading is somehow armed.
+2. Market-hours guard — outside regular hours, returns a plan whose only
+   instruction is "log a no-op," nothing else computed.
+3. SPY data-sanity check — bad/stale quote returns the same no-op plan.
+4. Computes `regime` → `technicals` → `technicals_only_decision()` once
+   (shared by both tracks — same underlying signal).
+5. Returns a plan describing exactly what live data Phase B will need:
+   - for each track with an open position: that position's `contract_id`
+     (so the calling agent knows which `get_option_quotes` to fetch for
+     the exit check)
+   - for each *flat* track, if the decision is buy/sell: the exact
+     expiration/strike/type already computed via
+     `options_data.select_liquid_expiration()` + the decision's action
+     (so the calling agent knows exactly which `get_option_instruments`
+     lookup to make — no guessing, no re-deriving)
+
+No MCP calls happen inside Phase A. The calling agent then makes exactly
+the live calls the plan named — quotes for held contracts, instrument
+lookups (and the Polygon diagnostic fallback if Robinhood's call fails)
+for prospective new ones.
+
+**Phase B — `execute_options_pass(plan, broker, live_data, now=None) -> dict`**
+
+Given Phase A's plan and the live data fetched in response to it:
+
+5. Exit sweep: for each track named in the plan, use the fetched live
+   quote → compare vs. entry → close on stop-loss / take-profit /
+   expiration-reached. `OPTIONS_AUTOMATION_DRY_RUN` (default `True`)
+   still logs every decision in full without calling
+   `OptionsPaperBroker.close_position()`.
+6. Entries: for each flat track the plan flagged for a possible entry,
+   resolve the contract from the fetched `get_option_instruments`
+   response (`options_data.parse_option_instruments()` +
+   `select_contract()`) → risk gate → open, using the fetched live quote
+   for the fill. No match in the live data → skip, log why, never
+   substitute. Same dry-run gating as exits.
+
+This keeps the "calling agent does live fetches, Python stays pure"
+pattern intact everywhere else in this project — it just needs two
+round-trips instead of one, because options have a real data dependency
+equities don't.
 
 ## Fill/cost modeling (live)
 
@@ -244,12 +277,15 @@ Matching existing conventions exactly:
 - `automation/run_options_pass.py` — proven via
   `automation/demo_run_options_pass.py`, mirroring the existing
   `automation/demo_run_pass.py` precedent: fabricated but deterministic
-  inputs exercising exit-sweep-then-entries ordering across both tracks
-  independently, one qualifying signal correctly opening both tracks the
-  same day, a track with an open position correctly skipped for entries
-  while the other track still opens, both fail-safes (market-hours
-  no-op, bad-data skip), dry-run logging with zero execution, and the
-  Polygon-fallback diagnostic path.
+  inputs driving both phases in sequence (Phase A's plan feeding
+  fabricated "live data" into Phase B, the same handoff a real calling
+  agent would perform with real MCP calls in between), exercising
+  exit-sweep-then-entries ordering across both tracks independently, one
+  qualifying signal correctly opening both tracks the same day, a track
+  with an open position correctly skipped for entries while the other
+  track still opens, both fail-safes (market-hours no-op, bad-data
+  skip), dry-run logging with zero execution, and the Polygon-fallback
+  diagnostic path.
 
 ## Known limitations, stated plainly
 
