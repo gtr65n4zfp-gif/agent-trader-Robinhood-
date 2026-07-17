@@ -240,7 +240,7 @@ if __name__ == "__main__":
     assert returns[:5] == [None, None, None, None, None], returns
     assert abs(returns[5] - (110.0 - 100.0) / 100.0) < 1e-9, returns
     assert abs(returns[6] - (111.0 - 101.0) / 101.0) < 1e-9, returns
-    print(f"PASS -- 5-day trailing return computed correctly, None-padded before warm-up: {returns}")
+    print(f"PASS — 5-day trailing return computed correctly, None-padded before warm-up: {returns}")
 
     print("\nTesting technicals_as_of includes recent_5d_return...")
     start = date(2026, 1, 1)
@@ -255,4 +255,4 @@ if __name__ == "__main__":
     assert result is not None, "expected a full bundle once warm-up is satisfied"
     assert "recent_5d_return" in result, result
     assert result["recent_5d_return"] > 0, result  # steadily rising prices -> positive 5d return
-    print(f"PASS -- technicals_as_of() bundle now includes recent_5d_return: {result['recent_5d_return']:.4f}")
+    print(f"PASS — technicals_as_of() bundle now includes recent_5d_return: {result['recent_5d_return']:.4f}")

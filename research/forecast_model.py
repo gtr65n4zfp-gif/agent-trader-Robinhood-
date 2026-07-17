@@ -111,19 +111,19 @@ if __name__ == "__main__":
     assert abs(model["coefficients"]["atr_pct"]) < 1e-6, model
     assert abs(model["coefficients"]["recent_5d_return"]) < 1e-6, model
     assert abs(model["intercept"]) < 1e-6, model
-    print(f"PASS -- recovered pct_from_ema coefficient 0.5 exactly, others ~0: {model['coefficients']}")
+    print(f"PASS — recovered pct_from_ema coefficient 0.5 exactly, others ~0: {model['coefficients']}")
 
     print("\nTesting predict() against the fitted model...")
     pred = predict({"pct_from_ema": 0.04, "rsi": 50.0, "atr_pct": 0.01, "recent_5d_return": 0.0}, model)
     assert abs(pred - 0.02) < 1e-6, pred  # 0.5 * 0.04 == 0.02
-    print(f"PASS -- predict() matches the planted relationship: {pred:.6f}")
+    print(f"PASS — predict() matches the planted relationship: {pred:.6f}")
 
     print("\nTesting fit() rejects mismatched rows/targets lengths...")
     try:
         fit(rows, targets[:-1])
         raise AssertionError("should have raised ValueError")
     except ValueError as e:
-        print(f"PASS -- raised clearly: {e}")
+        print(f"PASS — raised clearly: {e}")
 
     print("\nTesting save_model()/load_model() round-trip...")
     with tempfile.TemporaryDirectory() as tmp:
@@ -133,4 +133,4 @@ if __name__ == "__main__":
         assert loaded == model, (loaded, model)
         pred2 = predict({"pct_from_ema": 0.04, "rsi": 50.0, "atr_pct": 0.01, "recent_5d_return": 0.0}, loaded)
         assert abs(pred2 - pred) < 1e-9, (pred2, pred)
-    print("PASS -- model survives a save/load round-trip and predicts identically.")
+    print("PASS — model survives a save/load round-trip and predicts identically.")
