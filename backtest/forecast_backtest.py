@@ -130,6 +130,70 @@ def run_validation(rows: list[dict], targets: list[float], train_frac: float = 0
     }
 
 
+def spy_forecast_decision(technicals: dict, forecast: dict, regime: dict, quantity: float = 1) -> dict:
+    """
+    Same shape as judge.decide()'s return value, but mirrors
+    backtest.options_engine.technicals_only_decision(): the gate requires
+    Technicals AND Forecast (not Fundamentals — still structurally empty
+    for SPY, see agents/OPTIONS_BACKTEST_DESIGN.md's "Signal source")
+    to agree on direction and both clear judge.CONFIDENCE_THRESHOLD.
+    Regime gate is checked first, exactly as judge.decide() and
+    technicals_only_decision() both do, and can only force a HOLD, never
+    override one.
+
+    Only meaningful to actually wire into anything once a real fitted
+    model has cleared run_validation()'s promotion gate -- see this
+    module's docstring and the design doc's "Promotion gate" section.
+    Building this function doesn't imply that gate has been cleared.
+    """
+    symbol = technicals["symbol"]
+    if regime["symbol"] != symbol or forecast["symbol"] != symbol:
+        raise ValueError(
+            f"seat symbol mismatch: regime={regime['symbol']!r}, "
+            f"forecast={forecast['symbol']!r} vs {symbol!r}"
+        )
+
+    seat_inputs = {"technicals": technicals, "forecast": forecast, "regime": regime}
+
+    if not regime["tradeable"]:
+        return {
+            "seat": "judge_forecast", "action": "hold", "symbol": symbol,
+            "target_quantity": 0, "confidence": 0.0,
+            "rationale": f"No-trade is the default: regime filter -- {regime['state']}: {regime['reason']}",
+            "seat_inputs": seat_inputs,
+        }
+
+    t_stance, t_conf = technicals["stance"], technicals["confidence"]
+    f_stance, f_conf = forecast["stance"], forecast["confidence"]
+
+    aligned = t_stance == f_stance and t_stance in ("bullish", "bearish")
+    both_confident = t_conf >= judge.CONFIDENCE_THRESHOLD and f_conf >= judge.CONFIDENCE_THRESHOLD
+
+    if not (aligned and both_confident):
+        return {
+            "seat": "judge_forecast", "action": "hold", "symbol": symbol,
+            "target_quantity": 0, "confidence": round(min(t_conf, f_conf), 4),
+            "rationale": (
+                f"No-trade is the default: technicals={t_stance}({t_conf}), "
+                f"forecast={f_stance}({f_conf}) -- need agreement AND both "
+                f">= {judge.CONFIDENCE_THRESHOLD}"
+            ),
+            "seat_inputs": seat_inputs,
+        }
+
+    action = "buy" if t_stance == "bullish" else "sell"
+    return {
+        "seat": "judge_forecast", "action": action, "symbol": symbol,
+        "target_quantity": quantity, "confidence": round(min(t_conf, f_conf), 4),
+        "rationale": (
+            f"Technicals and Forecast both {t_stance} (confidence "
+            f"{t_conf}/{f_conf}) -- clears {judge.CONFIDENCE_THRESHOLD}; "
+            f"SPY has no usable Fundamentals leg."
+        ),
+        "seat_inputs": seat_inputs,
+    }
+
+
 if __name__ == "__main__":
     print("Testing chronological_split...")
     rows = [{"i": i} for i in range(20)]
@@ -202,3 +266,37 @@ if __name__ == "__main__":
         f"model accuracy={result['model_eval']['accuracy']}, "
         f"baseline accuracy={result['baseline_eval']['accuracy']}"
     )
+
+    print("\nTesting spy_forecast_decision — confident bullish agreement -> buy...")
+    bullish_technicals = {"seat": "technicals", "symbol": "SPY", "stance": "bullish", "confidence": 0.6, "reasons": ["price above EMA"]}
+    bullish_forecast = {"seat": "forecast", "symbol": "SPY", "stance": "bullish", "confidence": 0.7, "reasons": ["model predicts +1.5% return"]}
+    tradeable_regime = {"seat": "regime", "symbol": "SPY", "state": "trending", "volatility": "normal", "trend": "up", "tradeable": True, "reason": "normal volatility, clear up trend"}
+    d1 = spy_forecast_decision(bullish_technicals, bullish_forecast, tradeable_regime)
+    assert d1["action"] == "buy" and d1["target_quantity"] == 1, d1
+    print(f"PASS — confident bullish technicals + forecast + tradeable regime -> buy: {d1}")
+
+    print("\nTesting spy_forecast_decision — non-tradeable regime forces hold regardless...")
+    non_tradeable_regime = {"seat": "regime", "symbol": "SPY", "state": "ranging", "volatility": "normal", "trend": "sideways", "tradeable": False, "reason": "no directional edge, sitting out"}
+    d2 = spy_forecast_decision(bullish_technicals, bullish_forecast, non_tradeable_regime)
+    assert d2["action"] == "hold", d2
+    print(f"PASS — non-tradeable regime forces hold regardless of seat agreement: {d2}")
+
+    print("\nTesting spy_forecast_decision — technicals and forecast disagree -> hold...")
+    bearish_forecast = {"seat": "forecast", "symbol": "SPY", "stance": "bearish", "confidence": 0.7, "reasons": ["model predicts -1.5% return"]}
+    d3 = spy_forecast_decision(bullish_technicals, bearish_forecast, tradeable_regime)
+    assert d3["action"] == "hold", d3
+    print(f"PASS — technicals bullish but forecast bearish -> hold, not averaged: {d3}")
+
+    print("\nTesting spy_forecast_decision — forecast confidence below threshold -> hold...")
+    weak_forecast = {"seat": "forecast", "symbol": "SPY", "stance": "bullish", "confidence": 0.2, "reasons": ["model predicts a small return"]}
+    d4 = spy_forecast_decision(bullish_technicals, weak_forecast, tradeable_regime)
+    assert d4["action"] == "hold", d4
+    print(f"PASS — forecast below CONFIDENCE_THRESHOLD -> hold, not a weak buy: {d4}")
+
+    print("\nTesting spy_forecast_decision — symbol mismatch raises...")
+    mismatched_forecast = {**bullish_forecast, "symbol": "AAPL"}
+    try:
+        spy_forecast_decision(bullish_technicals, mismatched_forecast, tradeable_regime)
+        raise AssertionError("should have raised ValueError")
+    except ValueError as e:
+        print(f"PASS — raised clearly: {e}")
