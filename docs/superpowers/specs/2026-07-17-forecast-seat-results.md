@@ -61,6 +61,39 @@ four well-established technical features does not find a real edge here,
 on this data. That's a legitimate, informative result — not a failure of
 execution.
 
+## Follow-up: walk-forward check (does the single split's result hold up?)
+
+The single 75/25 split was flagged as a known limitation — the same kind
+of trap that made this session's options-backtest "calls-only" finding
+look stronger than it really was until a time-split check exposed it.
+Re-checked here with an expanding-window walk-forward: 4 sequential
+folds per horizon, each training on everything before its test window
+(never after) and testing on the next slice, reusing the exact same
+`research.forecast_model.fit()` and `backtest.forecast_backtest.
+evaluate_model()`/`evaluate_naive_baseline()` — no new fitting or
+evaluation logic, only different split boundaries (fixed at 40/55/70/85/100%
+before running, not chosen after seeing results).
+
+| Horizon | Folds beating baseline |
+|---|---|
+| 7-day | 1 / 4 |
+| 30-45 day | 1 / 4 |
+
+**This reinforces, not contradicts, the single-split result.** The model
+beats the naive baseline in only one of four sequential folds at both
+horizons — not a fluke of one unlucky split placement, but a consistent
+pattern across the whole dataset. One notable detail: the baseline
+itself swings wildly across folds (e.g. 7-day: 72.6% → 68.5% → 38.4% →
+74.3%), reflecting that "always predict bullish" does great in trending
+stretches and poorly in the choppier/down-trending one — and that's the
+one fold where the model happens to edge it out in both horizons. That's
+a single data point, not a validated regime-specific edge; it would need
+its own dedicated, pre-committed test to mean anything.
+
+**Conclusion stands, with more confidence than the single split alone
+gave it:** no real forecasting edge found in this feature set, on this
+data.
+
 ## Consequences, per the design's own decisions
 
 - **No model is promoted.** `research/forecast_model_params.json` is
