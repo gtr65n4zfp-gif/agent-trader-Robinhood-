@@ -26,9 +26,11 @@ from research import forecast_model
 
 def build_view(symbol: str, features: dict | None, model: dict) -> dict:
     """
-    features: {pct_from_ema, rsi, atr_pct, recent_5d_return} (same keys
-    research.forecast_model.FEATURE_KEYS expects) or None if there wasn't
-    enough warm-up history yet for this date.
+    features: dict with {pct_from_ema, rsi, atr_pct, recent_5d_return}, or
+    None if there wasn't enough warm-up history yet. NOTE: pct_from_ema must
+    be derived by the caller as (price - ema) / ema from backtest.data.
+    technicals_as_of()'s bundle; the other three keys (rsi, atr_pct,
+    recent_5d_return) are direct bundle keys.
     model: a fitted model dict (research.forecast_model.load_model()
     output) -- required, never None.
 

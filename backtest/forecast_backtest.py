@@ -93,8 +93,11 @@ def evaluate_model(model: dict, test_rows: list[dict], test_targets: list[float]
 
 
 def evaluate_naive_baseline(train_targets: list[float], test_targets: list[float]) -> dict:
-    """Same metrics as evaluate_model(), but for the fixed naive-drift
-    prediction (see naive_drift_direction()) instead of a fitted model."""
+    """Analogous accuracy/CI metrics to evaluate_model(), but for the fixed
+    naive-drift prediction (see naive_drift_direction()) instead of a fitted
+    model. Does NOT return mae/rmse (the naive baseline has no
+    continuous-valued prediction to compute error against); adds
+    predicted_direction field instead."""
     direction = naive_drift_direction(train_targets)
     n = len(test_targets)
     correct = sum(1 for t in test_targets if _actual_direction(t) == direction)
@@ -159,7 +162,7 @@ def spy_forecast_decision(technicals: dict, forecast: dict, regime: dict, quanti
         return {
             "seat": "judge_forecast", "action": "hold", "symbol": symbol,
             "target_quantity": 0, "confidence": 0.0,
-            "rationale": f"No-trade is the default: regime filter -- {regime['state']}: {regime['reason']}",
+            "rationale": f"No-trade is the default: regime filter — {regime['state']}: {regime['reason']}",
             "seat_inputs": seat_inputs,
         }
 
@@ -175,7 +178,7 @@ def spy_forecast_decision(technicals: dict, forecast: dict, regime: dict, quanti
             "target_quantity": 0, "confidence": round(min(t_conf, f_conf), 4),
             "rationale": (
                 f"No-trade is the default: technicals={t_stance}({t_conf}), "
-                f"forecast={f_stance}({f_conf}) -- need agreement AND both "
+                f"forecast={f_stance}({f_conf}) — need agreement AND both "
                 f">= {judge.CONFIDENCE_THRESHOLD}"
             ),
             "seat_inputs": seat_inputs,
@@ -187,7 +190,7 @@ def spy_forecast_decision(technicals: dict, forecast: dict, regime: dict, quanti
         "target_quantity": quantity, "confidence": round(min(t_conf, f_conf), 4),
         "rationale": (
             f"Technicals and Forecast both {t_stance} (confidence "
-            f"{t_conf}/{f_conf}) -- clears {judge.CONFIDENCE_THRESHOLD}; "
+            f"{t_conf}/{f_conf}) — clears {judge.CONFIDENCE_THRESHOLD}; "
             f"SPY has no usable Fundamentals leg."
         ),
         "seat_inputs": seat_inputs,

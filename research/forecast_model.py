@@ -27,9 +27,12 @@ FEATURE_KEYS = ["pct_from_ema", "rsi", "atr_pct", "recent_5d_return"]
 
 def fit(rows: list[dict], targets: list[float]) -> dict:
     """
-    rows: feature dicts, each with every key in FEATURE_KEYS present (see
-    backtest.data.technicals_as_of()'s bundle -- this function doesn't
-    compute features itself, only fits against already-computed ones).
+    rows: feature dicts, each with every key in FEATURE_KEYS present. NOTE:
+    `pct_from_ema` is NOT a direct key in backtest.data.technicals_as_of()'s
+    bundle -- callers must derive it as (price - ema) / ema before building
+    the feature dict. The other three keys (rsi, atr_pct, recent_5d_return)
+    ARE direct bundle keys. This function doesn't compute features itself,
+    only fits against already-computed ones.
     targets: forward return for each row, same length and order as rows.
 
     Returns a model dict: {"intercept", "coefficients": {feature: weight},

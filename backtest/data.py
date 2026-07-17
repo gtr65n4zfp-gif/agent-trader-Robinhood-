@@ -157,9 +157,10 @@ def recent_return_series(closes: list[float], period: int = 5) -> list[float | N
 
 def technicals_as_of(symbol: str, as_of: str, bars: list[dict], regime_ema_period: int) -> dict | None:
     """
-    Compute {price, ema, rsi, atr_pct, regime_ema} as they would have read
-    on `as_of`, using ONLY bars up to and including that date — the
-    no-lookahead choke point for prices/technicals (see bars_through()).
+    Compute {price, ema, rsi, atr_pct, regime_ema, recent_5d_return} as they
+    would have read on `as_of`, using ONLY bars up to and including that
+    date — the no-lookahead choke point for prices/technicals (see
+    bars_through()).
 
     bars: this symbol's FULL fetched bar history (parse_bars() output) —
     truncation happens here, not before this function is called, so the
