@@ -27,14 +27,22 @@
 # OPTIONS_AUTOMATION_RUN_OK nor OPTIONS_AUTOMATION_RUN_FAILED marker is
 # treated as a failure, not silently dropped.
 
+# Same DarkWake-race fix as run_scheduled.sh (see that script's own
+# comment for the full pmset-log-confirmed diagnosis): launchd wakes this
+# Mac from a brief background "DarkWake" to fire this job, and on
+# battery the system can re-enter Maintenance Sleep as little as 8
+# seconds later. caffeinate must start as the literal first line — not
+# wrapped around the later `claude -p` call — so its assertion is live
+# before any setup overhead (PATH export, cd, venv activation, prompt
+# writing) burns through that window. `-w $$` ties the assertion's
+# lifetime to this script's own PID; it releases and exits itself
+# automatically once this script does, no trap/cleanup needed.
+caffeinate -i -w $$ &
+
 set -uo pipefail  # deliberately NOT -e: failures are caught and logged below, not just abandoned
 
 # launchd runs services with a minimal PATH — same fix as run_scheduled.sh.
 export PATH="/Users/ethandungo/.local/bin:/Library/Frameworks/Python.framework/Versions/3.14/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
-# Same battery/sleep issue as the equity job — see run_scheduled.sh's own
-# comment for the confirmed failure mode this works around.
-CAFFEINATE=(caffeinate -i)
 
 PROJECT_DIR="/Users/ethandungo/agent-trader"
 LOG_FILE="$PROJECT_DIR/logs/options_automation_runs.log"
@@ -131,7 +139,10 @@ PROMPT_EOF
 PROMPT=$(cat "$PROMPT_FILE")
 rm -f "$PROMPT_FILE"
 
-OUTPUT=$("${CAFFEINATE[@]}" claude -p "$PROMPT" \
+# No caffeinate wrapper here anymore -- the whole script (not just this
+# call) has been covered by the background `caffeinate -i -w $$` since
+# the very first line.
+OUTPUT=$(claude -p "$PROMPT" \
   --allowedTools "Bash(python3 *) mcp__robinhood-trading__get_equity_quotes mcp__robinhood-trading__get_equity_technical_indicators mcp__robinhood-trading__get_option_quotes mcp__robinhood-trading__get_option_instruments mcp__robinhood-trading__get_accounts" \
   --output-format text 2>&1)
 EXIT_CODE=$?
