@@ -157,8 +157,15 @@ class OptionsPaperBroker:
             "starting_cash": config.OPTIONS_PAPER_STARTING_CASH,
         }
 
-    def _roll_day_and_check_risk(self, action: str, contract_cost: float,
-                                  current_marks: dict[str, float] | None, now: datetime) -> None:
+    def _roll_day_and_track_peak(self, current_marks: dict[str, float] | None, now: datetime) -> dict:
+        """Updates peak_equity and rolls day_date/day_start_equity forward if a
+        new calendar day has started; returns the account snapshot used for
+        this bookkeeping (and, by _roll_day_and_check_risk, the risk gate
+        below it). Called by both buy_to_open and close_position so this
+        state never goes stale just because a day's only activity was a
+        close -- close_position has no risk check to run, but the account's
+        peak/day-start tracking still needs to stay current regardless of
+        which side of a trade touched it last."""
         account = self.account(current_marks)
         if account["total_value"] > self.peak_equity:
             self.peak_equity = account["total_value"]
@@ -169,6 +176,11 @@ class OptionsPaperBroker:
             self.day_date = today
             self.day_start_equity = account["total_value"]
             self._save()
+        return account
+
+    def _roll_day_and_check_risk(self, action: str, contract_cost: float,
+                                  current_marks: dict[str, float] | None, now: datetime) -> None:
+        account = self._roll_day_and_track_peak(current_marks, now)
         daily_loss_pct = (
             (self.day_start_equity - account["total_value"]) / self.day_start_equity
             if self.day_start_equity > 0 else 0.0
@@ -194,6 +206,10 @@ class OptionsPaperBroker:
             raise ValueError(f"unknown track {track!r}, expected one of {_TRACKS}")
         if self.open_positions[track] is not None:
             raise OptionsTradeError(f"track {track} already has an open position")
+        if quantity <= 0:
+            raise OptionsTradeError(f"quantity must be positive, got {quantity}")
+        if entry_fill <= 0:
+            raise OptionsTradeError(f"entry_fill must be positive, got {entry_fill}")
 
         now = now or datetime.now(timezone.utc)
         contract_cost = quantity * config.OPTIONS_CONTRACT_MULTIPLIER * entry_fill
@@ -233,6 +249,15 @@ class OptionsPaperBroker:
 
         self.cash += proceeds
         self.open_positions[track] = None
+        # Roll peak/day bookkeeping AFTER the cash credit and slot clear
+        # above (not before, unlike buy_to_open's pre-mutation risk-gate
+        # snapshot) -- opening a position never changes total_value (cash
+        # spent == position value added), so buy_to_open's pre-mutation
+        # timing is a no-op either way there. Closing does change
+        # total_value by realized_pnl, so this call must see the credited
+        # cash and cleared slot to actually capture a profitable close's
+        # effect on peak_equity, rather than reporting the pre-close value.
+        self._roll_day_and_track_peak(current_marks=None, now=now)
         self._save()
         trade_log.record(
             "sell", "SPY", position["quantity"], exit_fill, paper=True, reason=reason,
@@ -316,6 +341,30 @@ if __name__ == "__main__":
         except OptionsTradeError as e:
             print(f"PASS — raised clearly: {e}")
 
+        print("\nTesting buy_to_open — rejects a non-positive quantity, cash untouched...")
+        cash_before_bad_qty = broker.cash
+        try:
+            broker.buy_to_open("7", "contract-neg", 685.0, "call", "2026-08-01", -1, 6.0)
+            raise AssertionError("should have raised OptionsTradeError")
+        except OptionsTradeError as e:
+            assert broker.open_positions["7"] is None, broker.open_positions
+            assert broker.cash == cash_before_bad_qty, broker.cash
+            print(f"PASS — negative quantity rejected, cash unchanged at {broker.cash}: {e}")
+        try:
+            broker.buy_to_open("7", "contract-zero", 685.0, "call", "2026-08-01", 0, 6.0)
+            raise AssertionError("should have raised OptionsTradeError")
+        except OptionsTradeError as e:
+            assert broker.cash == cash_before_bad_qty, broker.cash
+            print(f"PASS — zero quantity rejected, cash unchanged at {broker.cash}: {e}")
+
+        print("\nTesting buy_to_open — rejects a non-positive entry_fill...")
+        try:
+            broker.buy_to_open("7", "contract-badfill", 685.0, "call", "2026-08-01", 1, 0.0)
+            raise AssertionError("should have raised OptionsTradeError")
+        except OptionsTradeError as e:
+            assert broker.cash == cash_before_bad_qty, broker.cash
+            print(f"PASS — non-positive entry_fill rejected, cash unchanged: {e}")
+
         print("\nTesting buy_to_open — vetoed when it exceeds OPTIONS_MAX_TRADE_USD...")
         try:
             # entry_fill * 100 = 3000, over the $2500 cap
@@ -330,3 +379,17 @@ if __name__ == "__main__":
         assert reloaded.open_positions["30"] == pos30, reloaded.open_positions
         assert reloaded.open_positions["7"] is None, reloaded.open_positions
         print(f"PASS — reloaded broker matches: cash={reloaded.cash}, open_positions={reloaded.open_positions}")
+
+    with tempfile.TemporaryDirectory() as tmp2:
+        print("\nTesting close_position — a profitable close alone updates peak_equity (no buy_to_open needed)...")
+        peak_broker = OptionsPaperBroker(
+            portfolio_path=os.path.join(tmp2, "options_portfolio.json"),
+            log_path=os.path.join(tmp2, "options_trades.jsonl"),
+        )
+        peak_broker.buy_to_open("7", "peak-a", 685.0, "call", "2026-08-01", 1, 6.0)
+        peak_after_open = peak_broker.peak_equity  # opening never moves total_value (cash spent == position value added)
+        peak_broker.close_position("7", 9.0, reason="profitable exit")  # +$300 realized, no other trade follows
+        expected_peak = peak_broker.account()["total_value"]
+        assert peak_broker.peak_equity == expected_peak, (peak_broker.peak_equity, expected_peak)
+        assert peak_broker.peak_equity > peak_after_open, (peak_broker.peak_equity, peak_after_open)
+        print(f"PASS — peak_equity rose from {peak_after_open} (after open) to {peak_broker.peak_equity} (post-close), driven by close_position alone: {peak_broker.peak_equity}")
