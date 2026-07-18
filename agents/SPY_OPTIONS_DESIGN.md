@@ -471,12 +471,24 @@ jobs the way the MCP fetches do.
   self-contained unit once actually built, not something that belonged
   bolted onto `options_engine.py`. (Built in Task 3.)
 - `backtest/options_valuation.py` — the Black-Scholes-with-my-own-sigma
-  pricing function from Level 2, and the edge calculation built on it.
-  Genuinely new; nothing in this repo currently prices an option.
+  pricing function (`black_scholes_price()`, r=0, stdlib `math.erf` for
+  the normal CDF, no new dependency), and the edge calculation built on
+  it (`single_leg_edge()` for the debit structure, `spread_model_value()`
+  / `spread_edge()` for the credit spread). Genuinely new; nothing in
+  this repo priced an option before this. (Built in Task 4.)
+- An addition to `backtest/options_data.py` — `select_spread_strikes()`,
+  the credit spread's 2-leg strike selection (sold leg reuses
+  `select_contract()`'s existing ATM logic unchanged; the protective
+  leg is the closest listed strike clearing a stated 1% minimum width,
+  never a narrower substitute). Not a new file — this genuinely belongs
+  alongside `select_contract()`, the file that already owns contract
+  selection. (Built in Task 4.)
 - `backtest/options_spread_engine.py` (or an addition to
-  `backtest/options_engine.py`) — the two-leg credit-spread simulation
-  described in Level 2, parallel to but not replacing
-  `simulate_option_trade()`.
+  `backtest/options_engine.py`) — the two-leg credit-spread SIMULATION
+  (day-by-day fill walk, stop/target/expiration), described in Level 2
+  but scoped to Task 5 ("options-aware fills") — strike selection and
+  valuation (Task 4, above) resolve WHICH candidate to trade; this piece
+  is what walks it forward once entered.
 - An addition to `backtest/options_metrics.py` — the per-regime/per-side
   breakdown function, and the GARCH-vs-vol-forecast-baseline ablation
   reporting (forecast-error comparison plus the two parallel P&L runs).

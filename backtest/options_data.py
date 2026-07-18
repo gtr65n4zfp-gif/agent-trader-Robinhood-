@@ -209,6 +209,55 @@ def select_contract(spot: float, side: str, instruments: list[dict]) -> dict | N
     return min(candidates, key=lambda i: abs(i["strike"] - spot))
 
 
+def select_spread_strikes(spot: float, option_type: str, instruments: list[dict],
+                           width_pct: float = 0.01) -> tuple[dict, dict] | None:
+    """
+    Pick the SOLD (near-ATM) and BOUGHT (protective) strikes for a
+    2-leg vertical credit spread (see
+    agents/SPY_OPTIONS_DESIGN.md's Level 2 "Structure set"). Reuses
+    select_contract() unchanged for the sold leg's ATM selection — this
+    function only adds the protective leg's strike.
+
+    instruments: same convention as select_contract() — already filtered
+    to ONE expiration date, this function doesn't check expiration_date.
+    option_type: "put" for a bull put spread (protective leg strikes
+    BELOW the sold strike, further downside OTM) or "call" for a bear
+    call spread (protective leg strikes ABOVE the sold strike, further
+    upside OTM) — the caller (backtest.vol_edge_signal.vol_edge_decision())
+    already resolved which type the tilt+edge combination calls for.
+
+    width_pct: minimum distance from the sold strike, as a fraction of
+    spot (default 1%) — a stated POLICY CHOICE, not derived from data or
+    fitted to any result, same caveat class as
+    vol_edge_signal.MIN_EDGE_PCT and execution/config.py's
+    MIN_VOL_SCALAR. The protective leg is the CLOSEST listed strike that
+    still clears this minimum width, not the widest available — a
+    tighter spread for less protection, not the reverse.
+
+    Returns (sold_instrument, bought_instrument), or None if no sold
+    contract exists, or no protective strike clears width_pct — never
+    substitutes a narrower width or a different type. Caller skips this
+    signal.
+    """
+    side = "buy" if option_type == "call" else "sell"
+    sold = select_contract(spot, side, instruments)
+    if sold is None:
+        return None
+
+    target_width = width_pct * spot
+    candidates = [i for i in instruments if i["type"] == option_type and i["id"] != sold["id"]]
+    if option_type == "put":
+        far_enough = [i for i in candidates if sold["strike"] - i["strike"] >= target_width]
+        bought = max(far_enough, key=lambda i: i["strike"]) if far_enough else None
+    else:
+        far_enough = [i for i in candidates if i["strike"] - sold["strike"] >= target_width]
+        bought = min(far_enough, key=lambda i: i["strike"]) if far_enough else None
+
+    if bought is None:
+        return None
+    return sold, bought
+
+
 if __name__ == "__main__":
     print("Testing parse_option_instruments...")
     raw = {
@@ -290,6 +339,42 @@ if __name__ == "__main__":
 
     assert select_contract(618.5, "sell", instruments[:3]) is None
     print("PASS — no put available returns None, not a fallback to a call.")
+
+    print("\nTesting select_spread_strikes — bull put spread (protective strike BELOW sold)...")
+    put_instruments = [
+        {"id": f"put-{k}", "strike": float(k), "type": "put", "expiration_date": "2026-01-16"}
+        for k in range(590, 621, 5)  # 590, 595, ..., 620
+    ]
+    # spot=618.5 -> sold ATM put is strike 620 (nearest). 1% width of 618.5 = 6.185,
+    # so protective must be <= 620 - 6.185 = 613.815 -> nearest strike clearing that is 610.
+    spread = select_spread_strikes(618.5, "put", put_instruments, width_pct=0.01)
+    assert spread is not None
+    sold, bought = spread
+    assert sold["strike"] == 620.0, sold
+    assert bought["strike"] == 610.0, bought  # closest strike that still clears the 1% width, not 605 or lower
+    print(f"PASS — bull put spread: sold {sold['strike']}, protective (bought) {bought['strike']} "
+          f"(below sold, closest strike clearing the 1% width).")
+
+    print("\nTesting select_spread_strikes — bear call spread (protective strike ABOVE sold)...")
+    call_instruments = [
+        {"id": f"call-{k}", "strike": float(k), "type": "call", "expiration_date": "2026-01-16"}
+        for k in range(615, 651, 5)  # 615, 620, ..., 650
+    ]
+    spread_call = select_spread_strikes(618.5, "call", call_instruments, width_pct=0.01)
+    assert spread_call is not None
+    sold_c, bought_c = spread_call
+    assert sold_c["strike"] == 620.0, sold_c
+    assert bought_c["strike"] == 630.0, bought_c  # 620 + 6.185 = 626.185 -> nearest clearing strike is 630
+    print(f"PASS — bear call spread: sold {sold_c['strike']}, protective (bought) {bought_c['strike']} "
+          f"(above sold, closest strike clearing the 1% width).")
+
+    print("\nTesting select_spread_strikes — no protective strike clears the width returns None...")
+    thin_instruments = [
+        {"id": "put-620", "strike": 620.0, "type": "put", "expiration_date": "2026-01-16"},
+        {"id": "put-618", "strike": 618.0, "type": "put", "expiration_date": "2026-01-16"},  # only 2 wide, too close
+    ]
+    assert select_spread_strikes(618.5, "put", thin_instruments, width_pct=0.01) is None
+    print("PASS — no listed strike clears the minimum width, returns None rather than a too-narrow spread.")
 
     print("\nTesting liquid_expirations_between...")
     fridays = liquid_expirations_between("2026-05-01", "2026-05-31")
