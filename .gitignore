@@ -19,6 +19,7 @@ logs/*.jsonl
 !logs/options_trades.jsonl
 logs/backtests/
 logs/automation_runs/
+logs/options_automation_runs/
 *.sqlite
 
 # OS
