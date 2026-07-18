@@ -483,12 +483,18 @@ jobs the way the MCP fetches do.
   never a narrower substitute). Not a new file — this genuinely belongs
   alongside `select_contract()`, the file that already owns contract
   selection. (Built in Task 4.)
-- `backtest/options_spread_engine.py` (or an addition to
-  `backtest/options_engine.py`) — the two-leg credit-spread SIMULATION
-  (day-by-day fill walk, stop/target/expiration), described in Level 2
-  but scoped to Task 5 ("options-aware fills") — strike selection and
-  valuation (Task 4, above) resolve WHICH candidate to trade; this piece
-  is what walks it forward once entered.
+- `backtest/options_spread_engine.py` — the two-leg credit-spread
+  SIMULATION (`simulate_spread_trade()`: day-by-day fill walk, matched
+  by date across both legs, stop/target/expiration), parallel to but
+  never modifying `options_engine.simulate_option_trade()`. Stop/target
+  apply to the SPREAD's net value (sold leg close minus bought leg
+  close), using the exact same `pnl_pct` sign convention the debit
+  engine already uses, so `config.OPTIONS_STOP_LOSS_PCT`/
+  `OPTIONS_TAKE_PROFIT_PCT` apply unchanged to both structures. Verified
+  against a real fetched SPY 615/605 put spread (2026-05-15 expiration,
+  real daily closes 2026-04-20→05-01): both legs decayed steadily in the
+  real market, producing a real positive P&L, not a synthetic
+  best-case fixture. (Built in Task 5.)
 - An addition to `backtest/options_metrics.py` — the per-regime/per-side
   breakdown function, and the GARCH-vs-vol-forecast-baseline ablation
   reporting (forecast-error comparison plus the two parallel P&L runs).
