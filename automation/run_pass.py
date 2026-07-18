@@ -51,17 +51,27 @@ per-symbol bundle:
 """
 
 
-def _extract_symbol_data(symbol: str, sym_bundle: dict) -> dict | None:
+def _extract_symbol_data(symbol: str, sym_bundle: dict, now: datetime) -> dict | None:
     """
     Parse one symbol's raw MCP bundle into the values the pipeline needs.
     Returns None — never raises — if anything fails to parse or the quote
     is stale. This is where FAIL-SAFE rule 3 actually lives: bad or
     missing data for one symbol can never reach the seats or the broker.
     The caller logs a skip and moves on to the next symbol.
+
+    now is threaded into get_quote_age_minutes() explicitly rather than
+    relying on both sides defaulting to real wall-clock time — required
+    so run_pass()'s own `now` override (for deterministic testing, e.g.
+    automation/demo_run_pass.py) actually governs the staleness check
+    too, not just the market-hours guard. Without this, a caller passing
+    a fixed historical `now` still gets today's real time compared
+    against a years-old fixture timestamp, and every symbol silently
+    fails staleness once enough real time has passed since the fixture
+    was written — exactly what broke demo_run_pass.py on 2026-07-18.
     """
     try:
         price = robinhood.get_quote(symbol, sym_bundle["quote"])
-        age_minutes = robinhood.get_quote_age_minutes(symbol, sym_bundle["quote"])
+        age_minutes = robinhood.get_quote_age_minutes(symbol, sym_bundle["quote"], now=now)
         if age_minutes > config.MAX_QUOTE_AGE_MINUTES:
             return None
         atr_pct = robinhood.get_atr_pct(symbol, price, sym_bundle["atr"])
@@ -129,7 +139,7 @@ def run_pass(bundle: dict[str, dict], now: datetime | None = None, broker: Paper
     # seats or the broker.
     parsed: dict[str, dict] = {}
     for symbol, sym_bundle in bundle.items():
-        data = _extract_symbol_data(symbol, sym_bundle)
+        data = _extract_symbol_data(symbol, sym_bundle, now)
         if data is None:
             summary["symbols_skipped"][symbol] = "bad or stale data"
             trade_log.record(
