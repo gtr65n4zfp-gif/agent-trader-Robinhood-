@@ -458,7 +458,18 @@ jobs the way the MCP fetches do.
   Agent-mediated in spirit (the module doesn't fetch anything itself, a
   driving script/session does the HTTP GET and passes the raw text in) —
   though notably the fetch itself needs no MCP session or API key, unlike
-  every other agent-mediated parser in this project.
+  every other agent-mediated parser in this project. (Built in Task 3.)
+- `backtest/vol_edge_signal.py` — Level 1's IV-edge calculation
+  (`iv_edge()`, `premium_signal()`), the horizon-matched market-implied-vol
+  lookup (`market_implied_vol()`, picking VIX9D/VIX/VIX3M by closest
+  nominal maturity to the signal's ACTUAL resolved days-to-expiration, not
+  just its nominal 7/30/45-day label), and `vol_edge_decision()`, which
+  combines that with the UNCHANGED
+  `options_engine.technicals_only_decision()` to produce a structure/side
+  decision. Not named as a separate file in Task 1's original list — added
+  here since Level 1's combination logic turned out to be a real,
+  self-contained unit once actually built, not something that belonged
+  bolted onto `options_engine.py`. (Built in Task 3.)
 - `backtest/options_valuation.py` — the Black-Scholes-with-my-own-sigma
   pricing function from Level 2, and the edge calculation built on it.
   Genuinely new; nothing in this repo currently prices an option.
