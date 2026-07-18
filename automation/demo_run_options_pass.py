@@ -77,10 +77,16 @@ def _instruments_response(contract_id: str, strike: float, option_type: str, exp
 
 
 def _quote_response(contract_id: str, mark: float, bid: float | None = None, ask: float | None = None) -> dict:
+    """Shaped exactly like a real get_option_quotes response -- verified
+    2026-07-17 against a live SPY contract: instrument_id and every price
+    field are nested under "quote", same convention get_equity_quotes
+    uses (see _spy_bundle()'s own docstring above). An earlier version of
+    this fixture used a flat shape that happened to match
+    parse_option_quote()'s original bug rather than catching it."""
     return {"data": {"results": [
-        {"instrument_id": contract_id, "mark_price": str(mark),
-         "bid_price": str(bid) if bid is not None else None,
-         "ask_price": str(ask) if ask is not None else None},
+        {"quote": {"instrument_id": contract_id, "mark_price": str(mark),
+                    "bid_price": str(bid) if bid is not None else None,
+                    "ask_price": str(ask) if ask is not None else None}},
     ]}}
 
 

@@ -45,21 +45,28 @@ def parse_option_quote(raw_quote: dict, instrument_id: str) -> dict | None:
     the live quote didn't include them). Returns None if instrument_id
     isn't in the response's results -- caller skips, never fabricates.
 
-    Field names (mark_price/bid_price/ask_price) follow the snake-case
-    plus _price convention already confirmed for strike_price/open_price/
-    etc. elsewhere in this project's Robinhood parsing -- verify against
-    a real response at first live run and adjust here if the actual
-    schema differs, same discipline as every other agent-mediated parser
-    in this project.
+    Verified against a real get_option_quotes response (2026-07-17, SPY
+    743c 7/24): each results[] entry nests instrument_id and every price
+    field one level down under "quote" -- {"results": [{"quote":
+    {"instrument_id": ..., "mark_price": ..., ...}, "close": {...}}]} --
+    the same nesting convention get_equity_quotes uses (see
+    execution/robinhood.py's _extract_price()), not the flat
+    top-of-result shape this originally assumed. Field names themselves
+    (mark_price/bid_price/ask_price) were correct; only the nesting was
+    wrong -- confirmed the hard way: as originally written this could
+    never match a real instrument_id, so every quote lookup would
+    silently return None and the pass would skip every exit/entry leg
+    forever without ever surfacing an error.
     """
     results = raw_quote.get("data", {}).get("results", [])
-    match = next((r for r in results if r.get("instrument_id") == instrument_id), None)
+    match = next((r for r in results if r.get("quote", {}).get("instrument_id") == instrument_id), None)
     if match is None:
         return None
+    quote = match["quote"]
     return {
-        "mark_price": float(match["mark_price"]) if match.get("mark_price") is not None else None,
-        "bid_price": float(match["bid_price"]) if match.get("bid_price") is not None else None,
-        "ask_price": float(match["ask_price"]) if match.get("ask_price") is not None else None,
+        "mark_price": float(quote["mark_price"]) if quote.get("mark_price") is not None else None,
+        "bid_price": float(quote["bid_price"]) if quote.get("bid_price") is not None else None,
+        "ask_price": float(quote["ask_price"]) if quote.get("ask_price") is not None else None,
     }
 
 
@@ -281,8 +288,12 @@ if __name__ == "__main__":
     print(f"PASS — a broker built with no log_path override resolves to the options-specific file: {no_override.log_path}")
 
     print("\nTesting parse_option_quote -- found and not-found cases...")
-    raw = {"data": {"results": [{"instrument_id": "abc", "mark_price": "6.50",
-                                  "bid_price": "6.40", "ask_price": "6.60"}]}}
+    # Nested under "quote", matching the real get_option_quotes response
+    # shape (verified 2026-07-17 against a live SPY contract) -- not the
+    # flat shape this fixture originally used, which happened to match
+    # the parser's original bug rather than catching it.
+    raw = {"data": {"results": [{"quote": {"instrument_id": "abc", "mark_price": "6.50",
+                                            "bid_price": "6.40", "ask_price": "6.60"}}]}}
     q = parse_option_quote(raw, "abc")
     assert q == {"mark_price": 6.5, "bid_price": 6.4, "ask_price": 6.6}, q
     assert parse_option_quote(raw, "not-there") is None
