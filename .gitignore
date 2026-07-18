@@ -13,8 +13,10 @@ venv/
 logs/*.log
 logs/*.json
 !logs/paper_portfolio.json
+!logs/options_paper_portfolio.json
 logs/*.jsonl
 !logs/trades.jsonl
+!logs/options_trades.jsonl
 logs/backtests/
 logs/automation_runs/
 *.sqlite

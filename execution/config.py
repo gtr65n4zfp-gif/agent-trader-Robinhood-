@@ -223,4 +223,32 @@ OPTIONS_ROUNDTRIP_HAIRCUT_PCT: float = 0.03
 # shares, so premium P&L per contract is (exit - entry) * this.
 OPTIONS_CONTRACT_MULTIPLIER: float = 100.0
 
+# --- Live SPY options paper-trading pass (automation/run_options_pass.py) --
+# See docs/superpowers/specs/2026-07-17-live-spy-options-design.md. A fully
+# isolated account -- separate cash pool, separate risk caps from the
+# equity watchlist's, sized around real per-contract costs observed in
+# the options backtest ($467-$1,626 per contract; the equity account's
+# $1,000 MAX_TRADE_USD would have rejected several of those real trades).
+OPTIONS_PAPER_STARTING_CASH: float = 10000.0
+OPTIONS_MAX_TRADE_USD: float = 2500.0
+
+# Higher than equity's MAX_POSITION_PCT (0.10) deliberately: with at most
+# one position per track (two tracks total), this cap mostly matters
+# after a drawdown has already shrunk the account -- the trade-size cap
+# above is what actually binds most of the time. Two concurrent tracks
+# means combined exposure can reach ~50% of account value even with each
+# position individually capped at 25% -- a stated tradeoff, not an
+# oversight (see the design doc's "Known limitations").
+OPTIONS_MAX_POSITION_PCT: float = 0.25
+
+# One qualifying signal legitimately opening both horizon tracks the same
+# day is expected behavior, not churn -- this cap's real job is blocking
+# same-day re-entry right after a same-day stop-out in a single track.
+OPTIONS_MAX_TRADES_PER_DAY: int = 2
+
+# Same pattern as AUTOMATION_DRY_RUN above: every decision still made and
+# logged in full, but OptionsPaperBroker methods are never called until
+# this is deliberately flipped to False, one line, never as a side effect.
+OPTIONS_AUTOMATION_DRY_RUN: bool = True
+
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
