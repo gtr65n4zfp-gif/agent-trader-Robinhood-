@@ -27,3 +27,5 @@ logs/options_automation_runs/
 
 # Claude Code local settings (per-machine, never shared)
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/worktrees/
