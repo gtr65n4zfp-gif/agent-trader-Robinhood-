@@ -308,12 +308,16 @@ filter on top.
    engine wins the ablation), compared against real historical market
    premium.
 
-## Task 6 status (data fetch phase)
+## Task 6 status — partial results in, 3 of 8 fetch chunks still open
 
 Real-data fetch for the 170 unique resolved candidates, split into 8
-chunks by expiration date, in progress. Chunks 2, 3, 4, 6, 8 done and
-verified (real, non-fabricated resolved/skip data). Chunks 1, 5, 7 still
-need a successful fetch pass. Once all 8 are done: merge, run every
-resolved candidate through `options_engine.simulate_option_trade()` /
-`options_spread_engine.simulate_spread_trade()`, then aggregate into the
-final report per "Metrics" above.
+chunks by expiration date. Chunks 2, 3, 4, 6, 8 done and verified (real,
+non-fabricated resolved/skip data); chunks 1, 5, 7 (~91 candidates) were
+not fetched, a deliberate cost/usage tradeoff. A full backtest run
+against the 5 available chunks is written up in
+`agents/SPY_OPTIONS_VOL_EDGE_RESULTS.md`: **GARCH beats the trailing-RV
+baseline on both forecast accuracy (MAE 0.077 vs 0.101, wins 115/188
+rows) and trade P&L (57.9% win rate / +$3,167 vs 45.6% / -$919, n=57
+trades each)** — a real, promising result, but explicitly partial
+(~60% of candidates, overlapping confidence intervals) until the
+remaining 3 chunks are fetched and the run redone.
