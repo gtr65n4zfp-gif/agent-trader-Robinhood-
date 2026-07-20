@@ -138,6 +138,30 @@ only after it proves itself.
       widening intake before the engine is validated is premature. The crux
       decision is the bulk data source; design before code.
 
+## Parking lot (deferred ideas)
+
+Things worth doing eventually, deliberately NOT built now — the council hasn't
+yet shown it beats its own regime-blind baseline in backtest, so new surface
+area (new seats, new data sources) is on hold until that's resolved. Revisit
+after the live dry-run has real days behind it and the win-rate/entry-quality
+question is understood.
+
+- **QuiverQuant seat** — official MCP (`mcp.quiverquant.com`, ~$30/mo) for
+  congressional trades, insider activity, lobbying, gov contracts, 13F
+  holdings, dark-pool volume. Real, legitimate alt-data (not hype like the
+  rhood-rs/TikTok detours), but the "follow congressional trades" edge is
+  contested (reporting lag, crowded trade) and it'd be a brand-new seat +
+  paid dependency on a council that hasn't proven itself yet.
+- **Correlation filter** — a more general version of the existing
+  `MAX_SECTOR_PCT` cap: block piling into another position that's highly
+  correlated with existing holdings even when they don't share a sector.
+  Minor refinement, not an urgent gap.
+- **Daily status digest** — a morning "here's what today's pass sees" and
+  evening "here's how the paper account did" summary. Would have surfaced
+  the earlier cloud-routine Robinhood-unavailable failure same-day instead
+  of silently. Pairs naturally with the automation observability work
+  already in `automation/run_scheduled.sh`.
+
 ## Go-live gate (Milestone 5)
 
 "Provably profitable" isn't a vibe check. Real money doesn't get touched until
