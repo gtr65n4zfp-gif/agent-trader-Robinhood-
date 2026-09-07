@@ -1,16 +1,23 @@
 # Kalshi Bitcoin — multi-timeframe systematic strand (design / sketch)
 
 Blueprint only — no implementation yet. This is the outline for a new,
-fully isolated strand: systematically trading **Kalshi Bitcoin event
+**self-contained strand living in its own `kalshi/` package** — a
+different venue (Kalshi, not Robinhood), a different instrument (event
+contracts, not shares/options), its own account, config, and execution
+path. Nothing here reaches into the equity or options code, and nothing
+there depends on this. It systematically trades **Kalshi Bitcoin event
 contracts** across multiple horizons, structured like a small systematic
 desk but honestly scoped to run from one machine, paper-first.
 
-It reuses the repo's spine (regime filter, risk vetoer, paper broker with
-honest fills, isolated account + dry-run flag, a go-live gate that is a
-real bar and not a vibe), and adds the one thing this venue needs that
-equities/options didn't: a **calibrated probability engine**, because a
-Kalshi contract price *is* a probability and the whole edge is estimating
-that probability better than the crowd.
+It **borrows the repo's proven patterns** (regime filter, risk vetoer,
+paper broker with honest fills, isolated account + dry-run flag, a go-live
+gate that is a real bar and not a vibe) rather than sharing its runtime:
+the only things imported across the boundary are pure, stateless math
+libraries where it would be silly to fork them (e.g. `backtest/vol_forecast.py`).
+It adds the one thing this venue needs that equities/options didn't: a
+**calibrated probability engine**, because a Kalshi contract price *is* a
+probability and the whole edge is estimating that probability better than
+the crowd.
 
 ## Guiding principle
 
@@ -102,14 +109,17 @@ its own* before the next is added.
    API. Read-only, no auth-to-trade, until the engine below is proven.
 3. **Fair-value / probability engine** — the heart. Forecast BTC's terminal
    distribution at horizon `T`, then integrate it to `P(contract settles
-   YES)`. Vol model: EWMA / GARCH(1,1) realized vol (we already have
-   `backtest/vol_forecast.py` — reuse it), optionally cross-checked against
-   options-implied vol (e.g. Deribit) as a sanity band. Map to probability
-   via lognormal closed form for a first cut, Monte-Carlo for range brackets
-   and fat-tailed horizons.
-4. **Regime filter** — reuse the repo's regime concept (`agents/regime.py`):
-   a BTC vol/trend classifier that (a) *sets the distribution width* the
-   engine uses and (b) *gates* trading. Can only **tighten**, never loosen —
+   YES)`. Vol model: EWMA / GARCH(1,1) realized vol — import the pure
+   forecaster from `backtest/vol_forecast.py` (the one cross-strand
+   dependency worth having), optionally cross-checked against options-implied
+   vol (e.g. Deribit) as a sanity band. Map to probability via lognormal
+   closed form for a first cut, Monte-Carlo for range brackets and fat-tailed
+   horizons. Lives at `kalshi/fair_value.py`.
+4. **Regime filter** — its own `kalshi/regime.py`, modeled on the equity
+   strand's `agents/regime.py` but tuned for BTC (its vol scale and 24/7
+   session structure differ): a vol/trend classifier that (a) *sets the
+   distribution width* the engine uses and (b) *gates* trading. Kept separate
+   rather than shared. Can only **tighten**, never loosen —
    during regime transitions and blow-off vol, the model is least reliable,
    so sit out. A regime sit-out is logged distinctly and never counts as a
    round-trip, exactly like the equity strand.
@@ -123,12 +133,14 @@ its own* before the next is added.
    - Per-market and per-horizon exposure caps.
    - **Aggregate BTC-directional budget** — see below; this is the single
      most important risk rule for this strand.
-   - Daily-loss limit and trade-frequency cap, mirroring `risk_vetoer.py`.
+   - Daily-loss limit and trade-frequency cap, modeled on the equity
+     `risk_vetoer.py` but its own `kalshi/risk_vetoer.py`.
    Pure veto: can kill a trade on exposure grounds regardless of edge.
 7. **Execution layer** — fee-aware limit orders into the Kalshi book,
    passive-first (post inside the spread) with an aggressive fallback rule.
-   **Paper broker first** (`kalshi_paper_broker`), isolated account, own
-   trade log, own dry-run flag — same pattern as `options_paper_broker.py`.
+   **Paper broker first** (`kalshi/paper_broker.py`), isolated account, own
+   trade log, own dry-run flag — same pattern as `execution/options_paper_broker.py`,
+   reimplemented here because it speaks the Kalshi API, not Robinhood's.
 8. **Backtest / calibration layer** — the go-live gate's evidence.
    Reliability diagrams and Brier score (are our 70% forecasts right ~70% of
    the time?), plus PnL **net of fees**. A directional lucky streak can show
@@ -157,7 +169,7 @@ had. So:
 
 Two model inputs that retail ignores and a desk never does:
 
-- **Fee model** — `execution/config.py` gets a `kalshi_fee(price, contracts)`
+- **Fee model** — `kalshi/config.py` gets a `kalshi_fee(price, contracts)`
   used by *both* the signal layer (EV net of fee) and the paper broker
   (honest fills). A trade that's +edge gross and −EV after fee must be
   rejected, and the log must show both numbers.
@@ -165,16 +177,41 @@ Two model inputs that retail ignores and a desk never does:
   reference index/time. If our spot feed differs from Kalshi's settlement
   source, that gap is modeled as basis risk, not assumed to be zero.
 
+## Layout (its own package)
+
+The whole strand lives under `kalshi/`, self-contained. The only imports
+that cross the boundary are pure math libraries (`backtest/vol_forecast.py`);
+everything stateful — config, account, execution, logs — is the strand's own.
+
+```
+kalshi/
+├── DESIGN.md            # this document
+├── config.py            # Kalshi caps, dry-run flag, kalshi_fee(), live switch
+├── reference_data.py    # BTC spot/OHLCV on Kalshi's settlement basis (Layer 1)
+├── market_data.py       # Kalshi read-only client: contracts, books, settlements (Layer 2)
+├── fair_value.py        # probability engine per horizon (Layer 3)
+├── regime.py            # BTC vol/trend classifier — width-setter + gate (Layer 4)
+├── signal.py            # fair value vs book, EV net of fee, edge gate (Layer 5)
+├── risk_vetoer.py       # sizing + aggregate BTC-exposure budget (Layer 6)
+├── paper_broker.py      # isolated paper account, honest fills (Layer 7)
+├── backtest.py          # reliability/Brier + net-PnL calibration harness (Layer 8)
+├── run_pass.py          # plan-then-execute automation entrypoint (Layer 9)
+└── demo_*.py            # end-to-end self-tests, one per milestone
+```
+
+Its own log files (`logs/kalshi_*.jsonl` / `.json`) and its own
+`config/.env` keys — never the equity or options files.
+
 ## Isolation and safety (non-negotiable, same as every strand)
 
 - **Paper only** until proven. No task places a real Kalshi order until the
   go-live gate below is met and a hard switch is deliberately flipped —
-  mirror `assert_paper_mode()` / the `AGENT_TRADER_LIVE` unlock pattern with
-  a Kalshi-specific equivalent.
+  a Kalshi-specific equivalent of `assert_paper_mode()` / the
+  `AGENT_TRADER_LIVE` unlock pattern, defined in `kalshi/config.py`.
 - **Fully isolated account** — own cash pool, own portfolio file
   (`logs/kalshi_paper_portfolio.json`), own trade log
   (`logs/kalshi_trades.jsonl`), own dry-run flag. Never touches the equity
-  or options accounts.
+  or options accounts, and they never touch it.
 - Kalshi API keys live in `config/.env` (git-ignored), never committed.
 - Every decision logged with reasoning, its regime state, fair-value P, book
   price, edge gross, fee, and edge net.
