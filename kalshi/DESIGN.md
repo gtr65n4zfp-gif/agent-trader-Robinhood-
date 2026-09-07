@@ -83,13 +83,21 @@ several horizons (intraday/hourly, daily, and longer). Each contract:
 > rate, corroborated two independent ways, coded into `kalshi/config.py`),
 > pending only a primary-source PDF check before real money.
 >
-> **M1 is started, not complete** — see M0_FINDINGS.md's "M1 progress"
-> section. `kalshi/config.py` (fee model, paper-mode switch) and
-> `kalshi/market_data.py` (read-only client, request signing) are built and
-> pass their own self-tests, but this sandbox's network egress proxy blocks
-> the entire `kalshi.com` domain, so the actual M1 exit criterion — pulling
-> a real book and hand-reconciling a real settlement — has not run. That's
-> the concrete next action, from an environment with real Kalshi access.
+> **M1 and M2's math are started, neither is complete** — see
+> M0_FINDINGS.md's "M1 progress"/"M2 progress" sections. Built and
+> self-tested: `kalshi/config.py` (fee model, paper-mode switch),
+> `kalshi/market_data.py` (read-only client, request signing),
+> `kalshi/fair_value.py` (lognormal probability engine), and
+> `kalshi/calibration.py` (Brier score, reliability buckets, go-live-gate
+> comparison). All pure logic against synthetic fixtures or injected fake
+> transports — **zero real BTC data or real Kalshi data has touched any of
+> it yet**. This sandbox's network egress proxy blocks the entire
+> `kalshi.com` domain *and* generic public data APIs (tested: Coinbase,
+> also blocked) — a general policy, not Kalshi-specific — and Robinhood MCP
+> turns out to have no crypto-historicals tool at all, only real-time
+> quotes. So both M1's live-reconciliation step and M2's real-data
+> calibration run need an environment that can actually reach external
+> data sources, which this one cannot. That's the concrete next action.
 
 ## Why multiple timeframes (they are different problems, one engine)
 
@@ -268,9 +276,15 @@ the paper log:
   reconciling one settled market by hand** — blocked in this sandbox by a
   network egress rule denying `kalshi.com`, so this needs to run somewhere
   with real access (see `M0_FINDINGS.md`).
-- **M2 — Probability engine + calibration harness (single horizon).** Daily
-  first. Reuse `backtest/vol_forecast.py`. Prove calibration on history
-  before it ever sizes a trade.
+- **M2 — Probability engine + calibration harness (single horizon). Math
+  core built, unvalidated on real data.** `kalshi/fair_value.py`
+  (`prob_above`/`prob_between`, lognormal closed form) and
+  `kalshi/calibration.py` (`brier_score`/`reliability_buckets`/
+  `beats_naive_baseline`) are written and self-tested against synthetic
+  fixtures with known-correct answers. Not yet run against a single real
+  BTC price or Kalshi settlement — no reachable data source from this
+  sandbox (see M0_FINDINGS.md). Daily horizon first, reusing
+  `backtest/vol_forecast.py` for the vol input, once real bars exist.
 - **M3 — Multi-horizon + regime filter.** Parameterize the engine per
   horizon; wire the BTC regime classifier as a width-setter and gate.
 - **M4 — Paper broker + fee model + risk vetoer + signal→paper execution.**

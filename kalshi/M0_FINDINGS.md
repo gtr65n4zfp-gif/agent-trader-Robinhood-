@@ -150,15 +150,82 @@ settlement against BRTI — **could not be run from here**. That live
 verification pass is the concrete next action, and needs an environment
 that can actually reach `kalshi.com`.
 
+**This turns out to be a general policy, not Kalshi-specific** — tested
+directly by trying Coinbase's public (no-auth) market-data API from this
+same sandbox; it was denied identically (`connect_rejected`, organization
+policy). So the blocker isn't "Kalshi is special-cased" — it's that this
+environment cannot reach arbitrary external data APIs at all, for any
+venue. That matters beyond M1: it means `reference_data.py`'s BTC feed
+(Layer 1) can't be built against a real exchange source from here either,
+not just `market_data.py` against Kalshi.
+
+## Two open questions sharpened by this pass
+
+- **Open question #4 (Robinhood MCP crypto granularity) is now answered,
+  not just "likely no":** Robinhood's MCP surface has **no crypto
+  historicals/candles tool at all** — only `get_crypto_quotes` (real-time
+  bid/ask/mark + previous close) and account/order/position tools. There is
+  no OHLCV history to pull for *any* granularity, daily included, not just
+  sub-daily. `reference_data.py` will need a dedicated crypto OHLCV source
+  regardless of horizon — confirmed, not a guess.
+- **New:** since neither Kalshi's nor a generic public exchange API (tested:
+  Coinbase) is reachable from this sandbox, `reference_data.py` and the
+  live-reconciliation step in `market_data.py` are both blocked by the same
+  environment constraint, not two separate problems. Fixing one (e.g.
+  getting Kalshi access) does not by itself unblock the other.
+
+## M2 progress (pure math, no real data — same environment constraint)
+
+Built and self-tested (all passing, synthetic fixtures only, zero network
+calls, zero real BTC data run through either):
+
+- **`kalshi/fair_value.py`** — `prob_above()`/`prob_between()`, the
+  lognormal-terminal-distribution probability engine from DESIGN.md's Layer
+  3. Pure closed-form math (`math.erf`-based normal CDF, no scipy). Caught
+  a real modeling subtlety while writing the self-test: at strike==spot
+  with drift=0, P(S_T > spot) is slightly **below** 0.5, not exactly 0.5 —
+  volatility drag (a lognormal's median sits below its mean), not a bug.
+  Worth remembering when this gets wired to real vol forecasts, since it's
+  an easy thing to mistake for an off-by-something error.
+- **`kalshi/calibration.py`** — `brier_score()`, `reliability_buckets()`,
+  `beats_naive_baseline()`, the go-live gate's actual evidence layer
+  (Layer 8). Self-tested against known reference values (a constant-50%
+  forecaster against a 50/50 base rate scores exactly 0.25, the textbook
+  number) and both a well-calibrated and a deliberately overconfident
+  synthetic forecaster, correctly distinguishing them.
+
+**Not done, and can't be from here:** running either module against real
+BTC price history or real Kalshi settlements — that's blocked by the same
+network constraint as M1, described above. `fair_value.py` and
+`calibration.py` are the right shape and provably correct as pure
+functions; whether the *model* (lognormal, GARCH-fed vol) is actually
+well-calibrated on real BTC is still completely unknown and stays that way
+until real data can flow through them.
+
 ## Next step
 
-Run `kalshi/market_data.py` for real (or an equivalent script) from an
-environment with live network access to Kalshi: confirm `BASE_URL` (three
-different hostnames turned up across sources — `api.elections.kalshi.com`,
-`trading-api.kalshi.com`, `external-api.kalshi.com` — pick the one that
-actually returns 200s), pull one live order book, pull `candlesticks` for a
-recently-settled BTC market, and hand-reconcile that settlement against a
-BRTI print from the same window. Also worth a direct primary-source check
-of the 0.07 crypto fee multiplier (a live order preview would confirm it
-directly) while that access exists — cheap to close out given it's already
-load-bearing in `kalshi_fee()`.
+Everything achievable via pure math or read-only research from this sandbox
+is now done (M0 complete, M1's client code + M2's math core built and
+self-tested). What's left across M1 and M2 converges on the **same single
+blocker**: no external data API is reachable from here, Kalshi or otherwise.
+So the concrete next action, from an environment with real network access
+(not necessarily this one):
+
+1. Confirm `BASE_URL` in `market_data.py` (three different hostnames turned
+   up across sources — `api.elections.kalshi.com`, `trading-api.kalshi.com`,
+   `external-api.kalshi.com` — pick the one that actually returns 200s).
+2. Pull one live order book + `candlesticks` for a recently-settled BTC
+   market, hand-reconcile that settlement against a BRTI print from the
+   same window (M1's real exit criterion).
+3. Source real BTC OHLCV history for `reference_data.py` (Robinhood MCP is
+   confirmed insufficient — no historicals tool at all — so this needs a
+   dedicated crypto data source, chosen and reachable from wherever this
+   next pass runs).
+4. Once (3) exists, run `backtest/vol_forecast.py` on real BTC bars ->
+   `fair_value.py`'s `prob_above()` -> `calibration.py`'s
+   `reliability_buckets()`/`brier_score()` against real historical
+   settlement outcomes. This is the actual test of whether the lognormal +
+   GARCH-vol approach is well-calibrated on BTC — unknown until this runs.
+5. Direct primary-source check of the 0.07 crypto fee multiplier (a live
+   order preview would confirm it directly) while that access exists —
+   cheap to close out given it's already load-bearing in `kalshi_fee()`.
