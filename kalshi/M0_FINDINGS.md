@@ -44,16 +44,27 @@ fills are meaningfully cheaper — reinforces the design's "passive-first"
 execution rule in Layer 7). Parabolic, peaks at 50¢, near-zero at the wings
 — exactly as `DESIGN.md` assumed.
 
-**Revision — needs direct verification before Layer 5/6 are coded:**
-multiple sources note the 0.07 multiplier is the *general* rate and that
-"premium markets like Crypto" may carry a **higher** multiplier. If BTC
-specifically uses a higher multiplier than 0.07, the EV-net-of-fee math in
-`fair_value.py`/`signal.py` needs that real number, not the general default
-— using the wrong constant would systematically overstate edge on every
-contract. **Action:** pull the exact per-category fee schedule from
-`docs.kalshi.com` (or `GET /exchange/schedule`-style endpoint / an order
-preview call) as the first step of M1, before `kalshi/config.py`'s
-`kalshi_fee()` is written with a hardcoded constant.
+**Resolved (M1, corroborated but not primary-source-verified):** the 0.07
+multiplier is actually the **crypto-specific (higher) rate**, not a general
+default — the earlier framing had the direction backwards. Cross-checked two
+independent ways: (a) a direct statement that Kalshi's multiplier "ranges
+0.07 for most categories, higher for premium categories like Crypto," and
+(b) published category peak-fee percentages (peak fee = multiplier × 0.25,
+at the 50¢ strike) of **~0.75% sports, ~1.00% politics, ~1.75–1.80%
+crypto** — which back out to multipliers of ~0.03, ~0.04, and **~0.07**
+respectively. Both angles converge on **0.07 for BTC/crypto**, the number
+this design had already guessed, now confirmed for the right reason instead
+of the wrong one. `kalshi/config.py`'s `kalshi_fee()` now implements this
+(`KALSHI_TAKER_FEE_MULTIPLIER = 0.07`, maker = 1/4 of that), self-tested
+against the ~1.75–1.80% peak figure.
+
+**Residual gap:** this is secondary-source corroboration, not a read of
+Kalshi's own fee-schedule PDF — `docs.kalshi.com` and `kalshi.com` are both
+**blocked by this sandbox's network egress proxy** (confirmed via the
+proxy's own status endpoint returning `connect_rejected` for every Kalshi
+host tried, not just a timeout). Re-verify against the real PDF or a live
+order preview before this strand risks real money; low-priority to revisit
+before then since two independent estimates already agree.
 
 ## 3. Settlement reference — fully resolved
 
@@ -102,20 +113,52 @@ which lines up with the design's proposed "daily first" sequencing in M2.
 ## Net effect on the design
 
 No architectural changes. Confirms: product lineup, one-engine-many-horizons
-approach, fee shape (parabolic, maker discount), passive-first execution
-rationale, and that a real backtest is buildable. Revises: (a) note `BTCPERP`
-exists but is out of scope, (b) do not hardcode the 0.07 fee multiplier for
-BTC without checking whether crypto carries a higher one — this is now the
-single highest-priority verification before any Layer 5/6 code is written,
-since it directly changes which strikes/horizons are ever +EV. Resolves
-open questions #2 and #3 outright; open question #1 (shortest horizon worth
-trading after fees) still needs the real fee number to answer and stays a
-question for M2's calibration harness, not M0.
+approach, fee shape (parabolic, maker discount, and now the actual
+multiplier), passive-first execution rationale, and that a real backtest is
+buildable. Revises: (a) note `BTCPERP` exists but is out of scope, (b) the
+0.07 multiplier is BTC/crypto's own (higher) rate, not a shared general
+default — corrected in `kalshi/config.py`. Resolves open questions #2 and
+#3 outright, and #4 (partially — 0.07 is now load-bearing code, pending
+primary-source confirmation). Open question #1 (shortest horizon worth
+trading after fees) still needs the real *fair-value edge* distribution to
+answer and stays a question for M2's calibration harness, not M0/M1.
+
+## M1 progress (partial — environment-constrained)
+
+Started, not complete. Built and self-tested (all passing, no network
+calls):
+
+- **`kalshi/config.py`** — the strand's own paper-mode switch
+  (`KALSHI_PAPER_MODE`/`KALSHI_TRADER_LIVE`, distinct from the equity
+  strand's), `kalshi_fee()` implementing the confirmed formula, starting
+  cash and dry-run flag. Sizing/exposure caps deliberately deferred to M4
+  (the risk vetoer), not guessed early.
+- **`kalshi/market_data.py`** — read-only client: RSA-PSS request signing
+  (`sign_request`/`build_auth_headers`), `get_markets()`, `get_orderbook()`,
+  `get_candlesticks()`, and a candlestick normalizer. Self-tests prove the
+  signing math is internally consistent (signs and verifies against its own
+  keypair) and the request/response shapes are correct against injected
+  fake transports — deliberately **not** a claim that Kalshi's real API
+  accepts these requests.
+
+**Blocked, not skipped:** this sandbox's network egress proxy denies the
+entire `kalshi.com` domain and its API subdomains (confirmed via the
+proxy's status endpoint, `connect_rejected` on every host tried — not a
+flaky timeout). So the actual M1 exit criterion — pull a real live book,
+pull real `candlesticks` for a settled market, and hand-reconcile one
+settlement against BRTI — **could not be run from here**. That live
+verification pass is the concrete next action, and needs an environment
+that can actually reach `kalshi.com`.
 
 ## Next step
 
-M1: build `market_data.py` against a **read-scoped** key, pull one live book
-plus a `candlesticks` pull for a settled market, and hand-reconcile a single
-settlement against a manually-fetched BRTI-equivalent print — before writing
-a line of `fair_value.py`. Also resolve the fee-multiplier question as part
-of that same pass (it's a read-only lookup, not a trading action).
+Run `kalshi/market_data.py` for real (or an equivalent script) from an
+environment with live network access to Kalshi: confirm `BASE_URL` (three
+different hostnames turned up across sources — `api.elections.kalshi.com`,
+`trading-api.kalshi.com`, `external-api.kalshi.com` — pick the one that
+actually returns 200s), pull one live order book, pull `candlesticks` for a
+recently-settled BTC market, and hand-reconcile that settlement against a
+BRTI print from the same window. Also worth a direct primary-source check
+of the 0.07 crypto fee multiplier (a live order preview would confirm it
+directly) while that access exists — cheap to close out given it's already
+load-bearing in `kalshi_fee()`.

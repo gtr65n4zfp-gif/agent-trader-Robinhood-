@@ -79,10 +79,17 @@ several horizons (intraday/hourly, daily, and longer). Each contract:
 > feasible; auth is a signed-request API key with `read`/`write` scopes.
 > Kalshi also lists **`BTCPERP`**, a margin-based perpetual future — a
 > different instrument, explicitly **out of scope** for this event-contract
-> strand. One open item carried into M1: whether BTC/crypto markets use a
-> higher fee multiplier than the general 0.07 — must be confirmed before
-> `kalshi_fee()` is coded, since it directly changes which strikes are ever
-> +EV.
+> strand. The fee-multiplier question is resolved (0.07 is BTC/crypto's own
+> rate, corroborated two independent ways, coded into `kalshi/config.py`),
+> pending only a primary-source PDF check before real money.
+>
+> **M1 is started, not complete** — see M0_FINDINGS.md's "M1 progress"
+> section. `kalshi/config.py` (fee model, paper-mode switch) and
+> `kalshi/market_data.py` (read-only client, request signing) are built and
+> pass their own self-tests, but this sandbox's network egress proxy blocks
+> the entire `kalshi.com` domain, so the actual M1 exit criterion — pulling
+> a real book and hand-reconciling a real settlement — has not run. That's
+> the concrete next action, from an environment with real Kalshi access.
 
 ## Why multiple timeframes (they are different problems, one engine)
 
@@ -253,9 +260,14 @@ the paper log:
   historical-data availability for backtest. No trading code. Design
   unchanged; one item (crypto fee multiplier) carried into M1 as the first
   thing to confirm.
-- **M1 — Data.** Reference BTC feed (right granularity, right settlement
-  basis) + Kalshi read-only market-data client. Proven by pulling a live
-  book and reconciling one settled market by hand.
+- **M1 — Data. In progress.** `kalshi/market_data.py` (read-only client:
+  request signing, `get_markets`/`get_orderbook`/`get_candlesticks`) is
+  built and self-tests clean against injected fixtures. `reference_data.py`
+  (the BTC feed on Kalshi's settlement basis) not yet started. Still
+  outstanding either way: **prove it by pulling a live book and
+  reconciling one settled market by hand** — blocked in this sandbox by a
+  network egress rule denying `kalshi.com`, so this needs to run somewhere
+  with real access (see `M0_FINDINGS.md`).
 - **M2 — Probability engine + calibration harness (single horizon).** Daily
   first. Reuse `backtest/vol_forecast.py`. Prove calibration on history
   before it ever sizes a trade.
