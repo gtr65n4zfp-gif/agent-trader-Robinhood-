@@ -71,6 +71,18 @@ several horizons (intraday/hourly, daily, and longer). Each contract:
 > much historical contract/settlement data is actually retrievable for
 > backtest. These are the load-bearing unknowns; the rest of this design is
 > stable regardless of how they resolve.
+>
+> **M0 is done** — see `kalshi/M0_FINDINGS.md`. Short version: lineup is
+> 15-min/hourly/daily/weekly/monthly/yearly event contracts, all settling
+> against the same CF Benchmarks BRTI 60-second average regardless of
+> horizon; a `candlesticks` history endpoint exists so a real M2 backtest is
+> feasible; auth is a signed-request API key with `read`/`write` scopes.
+> Kalshi also lists **`BTCPERP`**, a margin-based perpetual future — a
+> different instrument, explicitly **out of scope** for this event-contract
+> strand. One open item carried into M1: whether BTC/crypto markets use a
+> higher fee multiplier than the general 0.07 — must be confirmed before
+> `kalshi_fee()` is coded, since it directly changes which strikes are ever
+> +EV.
 
 ## Why multiple timeframes (they are different problems, one engine)
 
@@ -235,11 +247,12 @@ the paper log:
 
 ## Milestones (proposed)
 
-- **M0 — Recon (read-only).** Verify the load-bearing unknowns above: BTC
-  product lineup/horizons, fee formula + caps, settlement reference/cut
-  times, API auth + rate limits, historical-data availability for backtest.
-  No trading code. Output: a short findings note that confirms or revises
-  this design's assumptions.
+- **M0 — Recon (read-only). Done** — see `kalshi/M0_FINDINGS.md`. Verified
+  the load-bearing unknowns: BTC product lineup/horizons, fee formula
+  shape, settlement reference/cut times, API auth + rate limits,
+  historical-data availability for backtest. No trading code. Design
+  unchanged; one item (crypto fee multiplier) carried into M1 as the first
+  thing to confirm.
 - **M1 — Data.** Reference BTC feed (right granularity, right settlement
   basis) + Kalshi read-only market-data client. Proven by pulling a live
   book and reconciling one settled market by hand.
