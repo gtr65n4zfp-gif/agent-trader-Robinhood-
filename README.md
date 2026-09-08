@@ -138,6 +138,41 @@ only after it proves itself.
       widening intake before the engine is validated is premature. The crux
       decision is the bulk data source; design before code.
 
+## Kalshi track (event contracts) — feasibility harness
+
+A separate, self-contained experiment in `kalshi/`, prompted by the question
+*"can a bot bet daily on Kalshi and make ~5%/yr like the S&P?"* Short answer,
+built and measured rather than guessed: **not the way it's framed.** Kalshi is a
+binary prediction market — roughly zero-sum minus fees, with no built-in drift to
+compound — so "bet every day" mostly feeds the fee formula. See
+`kalshi/KALSHI_DESIGN.md` for the full write-up.
+
+What's built (all paper/simulated, same discipline as the equities side):
+
+- `kalshi/fees.py` — Kalshi's exact fee formula + break-even-edge math,
+  self-checking against their published numbers (`python -m kalshi.fees`).
+- `kalshi/paper_broker.py` — binary-contract paper account with correct per-side
+  cost (a NO contract costs `1 − price`), real settlement, and risk breakers.
+- `kalshi/market_sim.py` — an **honest** market generator: efficient by default,
+  so the bot *must* lose to fees; a documented favorite-longshot bias knob models
+  a real inefficiency.
+- `kalshi/strategy.py` — fee-aware, EV-gated, fractional-Kelly value bettor that
+  skips most markets and holds to settlement.
+- `kalshi/backtest.py` + `metrics.py` — engine with an explicit forecast-skill
+  input; results net of fees, win rate always with a confidence interval.
+- `kalshi/client.py` — read-only live/snapshot market data for when Kalshi is
+  reachable (it's blocked by network policy in the build sandbox).
+- `kalshi/demo_backtest.py` — the proof + a feasibility frontier
+  (`python -m kalshi.demo_backtest`).
+- `kalshi/selfcheck.py` — invariant guards that keep the sim honest
+  (`python -m kalshi.selfcheck`).
+
+**Finding:** with realistic inputs the strategy loses or barely breaks even; 5%/yr
+only appears with large persistent mispricing *and* a sharp model — a corner real
+markets rarely occupy. It's possible only with a real, demonstrated edge, gated by
+the same "prove it in paper first" go-live bar. Live order placement is
+deliberately not built.
+
 ## Parking lot (deferred ideas)
 
 Things worth doing eventually, deliberately NOT built now — the council hasn't
