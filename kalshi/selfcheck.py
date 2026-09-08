@@ -76,12 +76,44 @@ def check_extreme_edge_is_beatable() -> None:
     print("D. Real edge IS capturable ..... ok (harness isn't rigged negative)")
 
 
+def check_calibration_no_lookahead() -> None:
+    """The real-data tool's control: out-of-sample calibration must LOSE on
+    efficient synthetic data (no overfitting to noise) and WIN on clearly
+    mispriced data (it can find a real gap)."""
+    from .calibration import CalibrationModel, train_test_split
+    from .backtest import run_on_markets
+    from .market_sim import MarketGenerator
+
+    def make(mp, n=4000, seed=0):
+        gen = MarketGenerator(seed=seed, markets_per_day=1, mispricing=mp)
+        out = []
+        for _, day in gen.stream(n):
+            out.extend(day)
+        return out
+
+    eff = make(0.0)
+    tr, te = train_test_split(eff, seed=1)
+    r_eff = run_on_markets(te, CalibrationModel().fit(tr).predict)
+    assert r_eff.total_return < 0.02, (
+        f"calibration overfit a fair market: {r_eff.total_return:+.2%} OOS")
+
+    mis = make(0.20)
+    tr, te = train_test_split(mis, seed=1)
+    r_mis = run_on_markets(te, CalibrationModel().fit(tr).predict)
+    assert r_mis.total_return > 0, (
+        f"calibration failed to capture a real 0.20 mispricing: "
+        f"{r_mis.total_return:+.2%} OOS")
+    print(f"E. Calibration is lookahead-free  ok (efficient OOS "
+          f"{r_eff.total_return:+.1%}, mispriced OOS {r_mis.total_return:+.1%})")
+
+
 def main() -> None:
     print(config.mode_banner())
     check_no_cost()
     check_fair_bets_lose_only_fees()
     check_efficient_unbeatable()
     check_extreme_edge_is_beatable()
+    check_calibration_no_lookahead()
     print("\nAll Kalshi harness invariants hold.")
 
 

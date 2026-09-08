@@ -158,12 +158,18 @@ What's built (all paper/simulated, same discipline as the equities side):
   a real inefficiency.
 - `kalshi/strategy.py` — fee-aware, EV-gated, fractional-Kelly value bettor that
   skips most markets and holds to settlement.
-- `kalshi/backtest.py` + `metrics.py` — engine with an explicit forecast-skill
-  input; results net of fees, win rate always with a confidence interval.
+- `kalshi/backtest.py` + `metrics.py` — one engine, synthetic and real-market
+  runners; results net of fees, win rate always with a confidence interval.
+- `kalshi/calibration.py` — a price-only, out-of-sample model that *measures*
+  whether real markets are actually mispriced (favorite-longshot bias) and, if
+  so, trades it without lookahead.
 - `kalshi/client.py` — read-only live/snapshot market data for when Kalshi is
   reachable (it's blocked by network policy in the build sandbox).
 - `kalshi/demo_backtest.py` — the proof + a feasibility frontier
   (`python -m kalshi.demo_backtest`).
+- `kalshi/run_real_backtest.py` — calibration backtest on live / snapshot / demo
+  data (`python -m kalshi.run_real_backtest`; add `--fetch` locally for real
+  markets).
 - `kalshi/selfcheck.py` — invariant guards that keep the sim honest
   (`python -m kalshi.selfcheck`).
 

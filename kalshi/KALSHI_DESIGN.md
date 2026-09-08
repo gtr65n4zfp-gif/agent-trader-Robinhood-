@@ -76,17 +76,48 @@ kalshi/
 ├── paper_broker.py  # binary-contract paper account: per-side cost, settlement, breakers
 ├── market_sim.py    # HONEST market generator — efficient by default (bot must lose)
 ├── strategy.py      # fee-aware, EV-gated, fractional-Kelly value bettor
-├── backtest.py      # engine + a Forecaster whose skill is an explicit input
+├── backtest.py      # one engine (simulate); synthetic + real-market runners
 ├── metrics.py       # net-of-fees results, win rate WITH confidence interval
+├── calibration.py   # price-only, out-of-sample model that MEASURES real mispricing
 ├── client.py        # read-only live/snapshot market data (for local/real runs)
-└── demo_backtest.py # the proof + the feasibility frontier
+├── demo_backtest.py # the proof + the feasibility frontier
+├── run_real_backtest.py  # calibration backtest on live / snapshot / demo data
+└── selfcheck.py     # invariant guards
 ```
 
 Run the proof:
 
 ```
-python -m kalshi.fees           # fee formula self-check
-python -m kalshi.demo_backtest  # control + honest case + feasibility frontier
+python -m kalshi.fees              # fee formula self-check
+python -m kalshi.selfcheck         # all invariants
+python -m kalshi.demo_backtest     # control + honest case + feasibility frontier
+python -m kalshi.run_real_backtest # calibration backtest (synthetic demo by default)
+```
+
+### Testing against reality (the honest real-data path)
+
+Real markets give you `(price, outcome)` but **no hidden true probability**, so
+the simulator's `Forecaster` can't be used — using it would be cheating. The
+real-data tool instead does **calibration**:
+
+1. Bin resolved markets by price; the realized YES-rate per bin estimates the
+   true probability there. Any systematic gap between rate and price *is* the
+   mispricing (favorite-longshot bias shows up directly).
+2. Fit those bins on a **train** split, trade a disjoint **test** split. The
+   model never sees a traded market's outcome, so there's no lookahead — the
+   classic way a mispricing backtest lies to itself.
+3. Score the test split through the same fee-gated strategy, against a
+   "price is truth" baseline (which correctly barely trades a fair market).
+
+Controls (in `selfcheck.py`): on efficient synthetic data the calibration model
+**loses out-of-sample** (no overfitting to noise); on clearly mispriced data it
+**wins**. Note a price bin of n samples carries ~`0.5/√n` of pure sampling noise
+in its gap, so a small mean|gap| can be entirely noise — the out-of-sample
+backtest, not the gap, is the arbiter.
+
+```
+python -m kalshi.run_real_backtest --fetch    # real settled markets (run locally)
+python -m kalshi.run_real_backtest --snapshot logs/kalshi_markets.json
 ```
 
 ### Design choices that keep it honest, not flattering
