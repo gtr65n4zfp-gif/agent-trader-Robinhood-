@@ -63,34 +63,36 @@ in the live gate. Same bar the whole project runs on.
 Ranked by how cleanly each drops into the existing gate/backtest/paper-broker,
 easiest first.
 
-### 1. Time-series momentum (trend-following) — *SCAFFOLDED*
+### 1. Time-series momentum (trend-following) — *TESTED: FAILED the gate, not promoted*
 
-- **Status.** Built: the signal (`strategies/time_series_momentum.py`) and a
-  screening validation harness (`backtest/momentum_backtest.py`), both with
-  passing offline self-tests. **Not yet in the live gate** — it still has to
-  clear the promotion gate on real historical data first (no live-data access
-  in this environment; see README's network note). This is the scaffold, not
-  the verdict.
+- **Status.** Built and tested on real data: 109 months of split-adjusted
+  monthly bars from the Robinhood MCP for the watchlist plus SPY, long-only,
+  with costs. Full write-up in `agents/MOMENTUM_RESULTS.md`. **It failed every
+  promotion check.** It beat buy-and-hold on Sharpe on 0 of 8 symbols. Its buy
+  calls were right 56.0% of the time against a 59.8% always-long base rate. It
+  came out ahead in only 1 of 4 market periods, the 2022 bear market, where it
+  lost −13% against −19% for buy-and-hold. Its one real strength is
+  drawdown control, which makes it a possible future *market risk-off
+  overlay*. That would be a separate hypothesis with its own test. The code
+  stays as a tested building block. It is not in the live gate.
 - **Signal.** An instrument's own trailing 12-month return (skipping the most
   recent month — the "12-1" convention) predicts its next-period return:
-  positive → long, negative → short, small → stay out. Classic trend-following
-  (Moskowitz, Ooi & Pedersen). Self-normalized: the neutral band and confidence
-  scale to the symbol's own typical trend magnitude.
-- **Data.** Daily bars only — computed from `backtest/data.py`'s truncated
-  close series, lookahead-safe through the same `bars_through()` choke point.
-  **No new data source.**
+  positive → long, otherwise → cash (this system can't short). Classic
+  trend-following (Moskowitz, Ooi & Pedersen). Self-normalized: the neutral
+  band and confidence scale to the symbol's own typical trend magnitude.
+- **Data.** Price bars only, from the Robinhood MCP's `get_equity_historicals`.
+  The test used monthly bars, the literature's frequency. Signals are
+  lookahead-safe through `backtest/data.py`'s `bars_through()`. **No new data
+  source.**
 - **Why first.** Purely price-based, computes from data we already fetch, and
   the volatility-scaled sizing it wants is already in `execution/config.py`
   (`TARGET_DAILY_VOL_PCT`) and the regime filter. Lowest integration cost.
-- **Remaining work to promote.** Run `momentum_backtest.run_validation()` on
-  real fetched bars across the three windows in `agents/BACKTEST_DESIGN.md`;
-  if it clears the gate, wire the signal into `agents/judge.py` as the second
-  live strategy (making the gate conjunctive with Technicals) and run it
-  through the full `backtest/engine.py` + PaperBroker with modeled costs.
-- **Catch.** Crowded; bleeds in sharp V-shaped reversals. The regime filter is
-  the intended mitigation — verify it actually helps in backtest, don't assume.
-  The screening harness uses overlapping windows (optimistic CI) — it's for
-  rejecting a no-edge signal, not final proof; the engine is the real test.
+- **What happened to the catch.** The predicted weakness showed up exactly.
+  It bled in V-shaped reversals: in every rising period it sat in cash
+  through dips that quickly recovered and re-entered late. One lesson carries
+  forward to every later strategy: **this watchlist is a poor test bed.**
+  Eight of today's mega-cap winners, measured over a historic bull decade,
+  are survivorship-biased toward buy-and-hold.
 
 ### 2. Cross-sectional momentum (relative strength)
 

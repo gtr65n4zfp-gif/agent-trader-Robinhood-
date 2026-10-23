@@ -3,14 +3,24 @@ strategies/time_series_momentum.py -- the trend-following (time-series
 momentum) strategy signal. First entry in STRATEGY_LIBRARY.md's build order.
 
 THE RULE, in one line: if an instrument's own price has trended up over the
-past ~year, lean long; if it's trended down, lean short; if it's gone
+past ~year, lean long; if it's trended down, lean bearish; if it's gone
 roughly nowhere, stay out. This is the classic "12-1" momentum signal
 (Moskowitz, Ooi & Pedersen, SSRN 2089463): measure the trailing 12-month
 return but SKIP the most recent month, because very-short-term moves tend to
 reverse and would otherwise pollute the longer trend read.
 
+LONG-ONLY IN THIS SYSTEM: the paper literature trades both sides, but
+execution/paper_broker.py cannot short ("Can't sell X; only hold Y"). So
+here a bearish stance can only mean "don't hold it / get out," never "short
+it." backtest/momentum_backtest.py scores the long-only version as the
+headline for exactly this reason.
+
+The windows are in BARS, not calendar time: the defaults (252 lookback, 21
+skip) assume daily bars; pass 12 and 1 for monthly bars, the frequency the
+momentum literature itself uses.
+
 Domain-isolated like agents/technicals.py: it only ever sees this symbol's
-own daily closes, nothing else, and emits the SAME structured view shape
+own closes, nothing else, and emits the SAME structured view shape
 every strategy in this project returns -- {seat, symbol, stance, confidence,
 reasons} -- so agents/judge.py and the backtest consume it with no special
 cases. Pure, rule-based, no network, no fetching, no model to fit: given the
@@ -71,7 +81,7 @@ def trailing_return(closes: list[float], lookback_days: int = LOOKBACK_DAYS,
     return (end - start) / start
 
 
-def _typical_abs_return(closes: list[float], lookback_days: int, skip_days: int) -> float | None:
+def typical_abs_return(closes: list[float], lookback_days: int, skip_days: int) -> float | None:
     """
     Median absolute 12-1 momentum reading across all historical dates in
     `closes` where it's computable -- the symbol's own "normal" trend
@@ -99,7 +109,7 @@ def build_view(symbol: str, momentum: float | None, typical_abs_return: float | 
 
     momentum: trailing_return() output for this symbol as of the decision
     date, or None if there wasn't enough history.
-    typical_abs_return: _typical_abs_return() output -- the symbol's own
+    typical_abs_return: typical_abs_return() output -- the symbol's own
     normal trend magnitude, used to scale. None if it couldn't be estimated.
 
     Returns {seat, symbol, stance, confidence, reasons}. A missing momentum
@@ -148,7 +158,7 @@ def signal_from_closes(symbol: str, closes: list[float],
     hand-made numbers.
     """
     momentum = trailing_return(closes, lookback_days, skip_days)
-    typical = _typical_abs_return(closes, lookback_days, skip_days)
+    typical = typical_abs_return(closes, lookback_days, skip_days)
     return build_view(symbol, momentum, typical)
 
 

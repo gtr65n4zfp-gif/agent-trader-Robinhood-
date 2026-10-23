@@ -57,6 +57,11 @@ data. (See the git history and the "History" note below if you're looking for it
       - [x] Technicals strategy — rule-based price/EMA/RSI momentum /
             mean-reversion signal, the live library's first entry
             (`agents/technicals.py`)
+      - [x] Time-series momentum (trend-following) — built and backtested on
+            real Robinhood monthly data. **It failed the promotion gate** (0/8
+            symbols beat buy-and-hold on Sharpe), so it is not in the live
+            gate. Its only edge was drawdown control in the 2022 bear market
+            (`strategies/time_series_momentum.py`, `agents/MOMENTUM_RESULTS.md`)
       - [x] Forecast strategy (quant) — plain OLS return model over
             momentum/mean-reversion/volatility features, in backtest
             validation, not yet in the live gate (`strategies/forecast_model.py`,
