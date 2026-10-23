@@ -1,38 +1,45 @@
 """
-Judge — fourth seat of the trade council (see agents/COUNCIL_DESIGN.md).
+Judge — the strategy gate of the trade council (see agents/COUNCIL_DESIGN.md).
 
-The only seat that sees other seats' *outputs*, never their raw inputs:
-it takes a Fundamentals verdict (agents.fundamentals_seat.form_verdict())
-and a Technicals view (agents.technicals.build_view()) — each already
-reduced to {stance, confidence, reasons} — and weighs them into a single
-trade decision. It never touches SEC data or market data directly, and it
-never places an order: the Risk vetoer remains the separate, final gate
-at order time inside PaperBroker (execution/paper_broker.py). The Judge
-only decides; PaperBroker.buy()/.sell() is what actually executes, and
-that call still runs the full risk gate regardless of what the Judge said.
+The arbiter that turns a strategy signal into a trade decision. It takes a
+Technicals view (agents.technicals.build_view()) — already reduced to
+{stance, confidence, reasons} — and, optionally, the regime filter's
+reading, and weighs them into a single buy/sell/hold. It never touches raw
+market data directly, and it never places an order: the Risk vetoer remains
+the separate, final gate at order time inside PaperBroker
+(execution/paper_broker.py). The Judge only decides; PaperBroker.buy()/
+.sell() is what actually executes, and that call still runs the full risk
+gate regardless of what the Judge said.
 
-NO-TRADE IS THE DEFAULT — a conjunctive gate, not a vote or an average. A
-buy/sell decision only fires when Fundamentals and Technicals agree on
-direction AND both clear CONFIDENCE_THRESHOLD, AND (if supplied) the
-regime filter (agents/regime.py) doesn't object. Any disagreement, either
-seat below threshold, a neutral stance from either seat, or a non-
-tradeable regime all fall through to a HOLD. Overtrading is a bigger
-threat than a missed trade.
+NO-TRADE IS THE DEFAULT. A buy/sell only fires when the strategy signal is
+directional (bullish/bearish) AND clears CONFIDENCE_THRESHOLD, AND (if
+supplied) the regime filter (agents/regime.py) doesn't object. A neutral
+stance, confidence below the bar, or a non-tradeable regime all fall
+through to a HOLD. Overtrading is a bigger threat than a missed trade — the
+edge is discipline, not any one signal's cleverness.
 
 The regime filter can only TIGHTEN this gate, never loosen it — it's
 checked first, and a non-tradeable regime forces HOLD outright regardless
-of what Fundamentals/Technicals say. There's no path where a favorable
-regime overrides an otherwise-disqualifying seat disagreement; "tradeable"
-just means "no objection from price conditions," not "go."
+of what the strategy signal says. There's no path where a favorable regime
+overrides an otherwise-disqualifying signal; "tradeable" just means "no
+objection from price conditions," not "go."
+
+HISTORY: the gate used to be conjunctive across two domain-isolated seats
+(a SEC Fundamentals seat AND Technicals had to agree). The SEC/fundamentals
+track was retired when the project refocused on systematic, backtestable
+strategies (see README and COUNCIL_DESIGN.md). The gate is now built to run
+one validated strategy signal at a time; adding a second independent
+strategy (e.g. the forecast model in strategies/) back into a conjunctive
+gate is a deliberate future step, taken only once that strategy has cleared
+its own backtest — not assumed here.
 
 decide() and baseline_decide() are pure functions — no PaperBroker calls,
-no trade_log writes. Logging a HOLD (so "chose not to trade" is visible
-in the audit trail) and logging the baseline are the calling script's
-job, same as PaperBroker (not risk_vetoer.review()) is what writes veto
-records to trade_log.
+no trade_log writes. Logging a HOLD (so "chose not to trade" is visible in
+the audit trail) and logging the baseline are the calling script's job,
+same as PaperBroker (not risk_vetoer.review()) is what writes veto records.
 """
 
-CONFIDENCE_THRESHOLD = 0.5  # each seat must clear this AND agree on direction
+CONFIDENCE_THRESHOLD = 0.5  # the strategy signal must clear this to trade
 
 # Real position sizing is the Risk vetoer's job at order time — it's the
 # one with volatility/sector/drawdown awareness. This is just "how many
@@ -40,38 +47,30 @@ CONFIDENCE_THRESHOLD = 0.5  # each seat must clear this AND agree on direction
 DEFAULT_QUANTITY = 1
 
 
-def decide(
-    fundamentals: dict, technicals: dict, regime: dict | None = None, quantity: float = DEFAULT_QUANTITY
-) -> dict:
+def decide(technicals: dict, regime: dict | None = None, quantity: float = DEFAULT_QUANTITY) -> dict:
     """
-    Weigh two seat outputs into a single decision.
+    Weigh a strategy signal (plus an optional regime read) into a decision.
 
-    fundamentals: agents.fundamentals_seat.form_verdict() output.
-    technicals: agents.technicals.build_view() output.
-    regime: optional agents.regime.regime_stance() output. Omit to skip
-    the regime gate entirely (no objection, same as a tradeable regime).
-    A non-tradeable regime forces HOLD outright — see the module
-    docstring: this can only tighten the gate, never loosen it.
-    All supplied seat outputs must be for the same symbol.
+    technicals: agents.technicals.build_view() output — the strategy signal.
+    regime: optional agents.regime.regime_stance() output. Omit to skip the
+    regime gate entirely (no objection, same as a tradeable regime). A
+    non-tradeable regime forces HOLD outright — see the module docstring:
+    this can only tighten the gate, never loosen it. If supplied, it must be
+    for the same symbol as the signal.
 
     Returns {action: buy/sell/hold, symbol, target_quantity, confidence,
     rationale, seat_inputs}.
     """
-    if fundamentals["symbol"] != technicals["symbol"]:
-        raise ValueError(
-            f"seat symbol mismatch: fundamentals={fundamentals['symbol']!r} "
-            f"technicals={technicals['symbol']!r}"
-        )
-    symbol = fundamentals["symbol"]
+    symbol = technicals["symbol"]
     if regime is not None and regime["symbol"] != symbol:
         raise ValueError(f"seat symbol mismatch: regime={regime['symbol']!r} vs {symbol!r}")
 
-    seat_inputs = {"fundamentals": fundamentals, "technicals": technicals}
+    seat_inputs = {"technicals": technicals}
     if regime is not None:
         seat_inputs["regime"] = regime
 
     # Regime gate first — cheapest, most decisive block, and it must never
-    # be overridden by what the other seats say.
+    # be overridden by what the strategy signal says.
     if regime is not None and not regime["tradeable"]:
         return {
             "seat": "judge",
@@ -83,68 +82,54 @@ def decide(
             "seat_inputs": seat_inputs,
         }
 
-    f_stance, f_conf = fundamentals["stance"], fundamentals["confidence"]
-    t_stance, t_conf = technicals["stance"], technicals["confidence"]
+    stance, conf = technicals["stance"], technicals["confidence"]
 
-    aligned = f_stance == t_stance and f_stance in ("bullish", "bearish")
-    both_confident = f_conf >= CONFIDENCE_THRESHOLD and t_conf >= CONFIDENCE_THRESHOLD
+    directional = stance in ("bullish", "bearish")
+    confident = conf >= CONFIDENCE_THRESHOLD
 
-    if not (aligned and both_confident):
+    if not (directional and confident):
         reason_bits = []
-        if not aligned:
-            reason_bits.append(f"fundamentals={f_stance} vs technicals={t_stance} — not aligned")
-        if not both_confident:
-            reason_bits.append(
-                f"confidence below {CONFIDENCE_THRESHOLD}: fundamentals={f_conf}, technicals={t_conf}"
-            )
+        if not directional:
+            reason_bits.append(f"signal {stance} — no directional edge")
+        if not confident:
+            reason_bits.append(f"confidence {conf} below {CONFIDENCE_THRESHOLD}")
         return {
             "seat": "judge",
             "action": "hold",
             "symbol": symbol,
             "target_quantity": 0,
-            "confidence": round(min(f_conf, t_conf), 4),
+            "confidence": round(conf, 4),
             "rationale": "No-trade is the default: " + "; ".join(reason_bits),
             "seat_inputs": seat_inputs,
         }
 
-    action = "buy" if f_stance == "bullish" else "sell"
-    confidence = round(min(f_conf, t_conf), 4)  # weakest link, not an average
+    action = "buy" if stance == "bullish" else "sell"
 
     return {
         "seat": "judge",
         "action": action,
         "symbol": symbol,
         "target_quantity": quantity,
-        "confidence": confidence,
+        "confidence": round(conf, 4),
         "rationale": (
-            f"Fundamentals and technicals both {f_stance} "
-            f"(confidence {f_conf}/{t_conf}) — clears the {CONFIDENCE_THRESHOLD} threshold."
+            f"Strategy signal {stance} (confidence {conf}) — clears the "
+            f"{CONFIDENCE_THRESHOLD} threshold; regime not objecting."
         ),
         "seat_inputs": seat_inputs,
     }
 
 
-def baseline_decide(fundamentals: dict, technicals: dict, quantity: float = DEFAULT_QUANTITY) -> dict:
+def baseline_decide(technicals: dict, quantity: float = DEFAULT_QUANTITY) -> dict:
     """
-    The ablation/baseline hook (see COUNCIL_DESIGN.md): what a SINGLE
-    model, seeing both seats' outputs at once with no conjunctive gate,
-    would decide — the stronger signal wins instead of requiring strict
-    agreement. Logged alongside the real decision, never acted on, so we
-    can later measure whether the multi-agent structure actually adds
-    value over a plain filter or is just theater.
+    The ablation/baseline hook (see COUNCIL_DESIGN.md): what acting on the
+    raw strategy signal with NO discipline would do — no regime gate and no
+    confidence threshold, just follow the signal's direction whenever it has
+    one. Logged alongside the real decision, never acted on, so we can later
+    measure whether the regime gate + confidence bar actually add value over
+    naively trading the signal.
     """
-    symbol = fundamentals["symbol"]
-    f_stance, f_conf = fundamentals["stance"], fundamentals["confidence"]
-    t_stance, t_conf = technicals["stance"], technicals["confidence"]
-
-    if f_stance == t_stance and f_stance in ("bullish", "bearish"):
-        stance, confidence = f_stance, round((f_conf + t_conf) / 2, 4)
-    else:
-        # No agreement required — unlike the real Judge, the stronger
-        # (or, on a tie, fundamentals') signal simply wins. This laxness
-        # is deliberate: it's exactly what the real Judge is being
-        # measured against.
-        stance, confidence = (f_stance, f_conf) if f_conf >= t_conf else (t_stance, t_conf)
+    symbol = technicals["symbol"]
+    stance, conf = technicals["stance"], technicals["confidence"]
 
     action = "buy" if stance == "bullish" else "sell" if stance == "bearish" else "hold"
 
@@ -153,45 +138,41 @@ def baseline_decide(fundamentals: dict, technicals: dict, quantity: float = DEFA
         "action": action,
         "symbol": symbol,
         "target_quantity": quantity if action != "hold" else 0,
-        "confidence": confidence,
+        "confidence": round(conf, 4),
         "rationale": (
-            "Single-model baseline (no seat isolation, no conjunctive gate) — "
-            "for comparison only, never executed."
+            "Baseline: raw strategy signal, no regime gate, no confidence "
+            "threshold — for comparison only, never executed."
         ),
-        "seat_inputs": {"fundamentals": fundamentals, "technicals": technicals},
+        "seat_inputs": {"technicals": technicals},
     }
 
 
 if __name__ == "__main__":
-    # Self-test with synthetic seat outputs — deterministic, no network needed.
-    bullish_fundamentals = {
-        "seat": "fundamentals", "symbol": "AAPL", "stance": "bullish",
-        "confidence": 0.7, "reasons": ["revenue +16.6% YoY", "strong balance sheet"],
-    }
-    bullish_technicals = {
+    # Self-test with synthetic signals — deterministic, no network needed.
+    bullish = {
         "seat": "technicals", "symbol": "AAPL", "stance": "bullish",
         "confidence": 0.6, "reasons": ["price above EMA", "RSI oversold"],
     }
-    bearish_technicals = {
-        "seat": "technicals", "symbol": "AAPL", "stance": "bearish",
-        "confidence": 0.8, "reasons": ["price below EMA", "RSI overbought"],
-    }
-    weak_bullish_technicals = {
+    weak_bullish = {
         "seat": "technicals", "symbol": "AAPL", "stance": "bullish",
         "confidence": 0.2, "reasons": ["one weak signal only"],
     }
+    neutral = {
+        "seat": "technicals", "symbol": "AAPL", "stance": "neutral",
+        "confidence": 0.0, "reasons": ["signals disagree"],
+    }
 
-    print("Both seats bullish, both confident (should BUY):")
-    print(decide(bullish_fundamentals, bullish_technicals))
+    print("Signal bullish and confident (should BUY):")
+    print(decide(bullish))
 
-    print("\nSeats disagree in direction (should HOLD):")
-    print(decide(bullish_fundamentals, bearish_technicals))
+    print("\nSignal bullish but confidence too low (should HOLD):")
+    print(decide(weak_bullish))
 
-    print("\nSeats agree but technicals confidence too low (should HOLD):")
-    print(decide(bullish_fundamentals, weak_bullish_technicals))
+    print("\nSignal neutral (should HOLD):")
+    print(decide(neutral))
 
-    print("\nBaseline for the disagreement case — no strict gate, picks the stronger signal:")
-    print(baseline_decide(bullish_fundamentals, bearish_technicals))
+    print("\nBaseline for the weak signal — no threshold, follows direction anyway:")
+    print(baseline_decide(weak_bullish))
 
     tradeable_regime = {
         "seat": "regime", "symbol": "AAPL", "state": "trending",
@@ -204,9 +185,9 @@ if __name__ == "__main__":
         "reason": "low volatility, no directional edge — sitting out",
     }
 
-    print("\nBoth seats bullish and confident, but regime is non-tradeable "
+    print("\nSignal bullish and confident, but regime non-tradeable "
           "(should HOLD regardless — the gate can only tighten):")
-    print(decide(bullish_fundamentals, bullish_technicals, regime=non_tradeable_regime))
+    print(decide(bullish, regime=non_tradeable_regime))
 
-    print("\nSame bullish seats, tradeable regime (should BUY, same as with no regime supplied):")
-    print(decide(bullish_fundamentals, bullish_technicals, regime=tradeable_regime))
+    print("\nSame bullish signal, tradeable regime (should BUY, same as no regime supplied):")
+    print(decide(bullish, regime=tradeable_regime))

@@ -1,9 +1,26 @@
 # Backtest design (Milestone 4)
 
-Blueprint only — no implementation yet, per instruction. This describes a
-harness that replays the EXISTING council (unchanged decision logic)
-against historical data, so regime-diversity evidence doesn't have to wait
-on live paper passes accumulating one trading day at a time.
+Describes a harness that replays the EXISTING strategy pipeline (unchanged
+decision logic) against historical data, so regime-diversity evidence
+doesn't have to wait on live paper passes accumulating one trading day at a
+time.
+
+> **RESHAPE NOTE (strategy refocus).** This doc was written when the council
+> had a SEC **Fundamentals seat**. That track is gone (see README's
+> "History"); the pipeline is now **regime + Technicals strategy + Judge**,
+> pure rule-based Python end to end. The practical consequences for this
+> design:
+> - There is **no LLM token cost** and **no interactive pre-pass** — the whole
+>   "Cost strategy" section below is obsolete. `backtest/engine.py`'s
+>   `run_backtest()` takes no `fundamentals_cache`; it replays deterministically.
+> - The fundamentals-specific "no-lookahead" trap (`filed` vs `end` dates) no
+>   longer applies. `backtest/prove_no_lookahead.py` now proves only the
+>   **technicals** are lookahead-safe, which is the live path.
+> - `research/sec_client.py`, `agents/fundamentals_seat.py`,
+>   `backtest/data.py`'s `fundamentals_as_of()`/`council_bundle_for()`, and the
+>   `fundamentals_cache.json` artifact are all removed.
+> The sections below are kept as design history; where they describe
+> fundamentals machinery, read them as "no longer present."
 
 ## Guiding principle
 
@@ -205,19 +222,21 @@ for D in trading_days(window):
 
 Three parallel account tracks per run, all driven off the SAME fetched
 data for a fair comparison:
-1. **Council** — real `regime.regime_stance` → `technicals.build_view` +
-   cached Fundamentals verdict → `judge.decide` (conjunctive gate) →
-   `PaperBroker`. Exits: full `evaluate_exits` (all four paths).
-2. **Baseline (ablation)** — same seat inputs → `judge.baseline_decide`
-   (regime-blind, no conjunctive gate, per its own docstring) →
-   `PaperBroker`. Exits: `evaluate_exits` called *without* fundamentals/
-   technicals — this already skips `conviction_drop` gracefully (existing
+1. **Council** — real `regime.regime_stance` → `technicals.build_view`
+   (the strategy signal) → `judge.decide` (regime gate + confidence bar) →
+   `PaperBroker`. Exits: full `evaluate_exits` (all four paths). *(When the
+   fundamentals seat still existed this was a conjunctive gate over two
+   signals; it's one signal now — see the reshape note.)*
+2. **Baseline (ablation)** — same signal → `judge.baseline_decide`
+   (regime-blind, no confidence threshold, per its own docstring) →
+   `PaperBroker`. Exits: `evaluate_exits` called *without* the technicals
+   signal — this already skips `conviction_drop` gracefully (existing
    optional-arg behavior, zero new code) rather than mixing a
    baseline-driven entry with a real-Judge-driven exit check, which would
    muddy the ablation comparison. **Flagging this as a judgment call**,
    not obviously the only right answer — the alternative is letting
    baseline positions use the same conviction_drop check as the real
-   council; open to either, this is the cleaner-semantics default.
+   pipeline; open to either, this is the cleaner-semantics default.
 3. **Buy-and-hold** — chunked `PaperBroker.buy()` calls per symbol (same
    `MAX_TRADE_USD`-sized chunking `agents/exits.py`'s `close_position()`
    already uses) at the window's first trading day (equal cash split),

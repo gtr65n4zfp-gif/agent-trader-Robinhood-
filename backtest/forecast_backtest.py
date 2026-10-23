@@ -6,7 +6,7 @@ docs/superpowers/specs/2026-07-16-forecast-seat-design.md).
 Two independent pieces in this file:
 1. The validation harness (chronological_split, naive_drift_direction,
    evaluate_model, evaluate_naive_baseline, run_validation) -- decides
-   whether research.forecast_model's OLS baseline beats a naive-drift
+   whether strategies.forecast_model's OLS baseline beats a naive-drift
    baseline on held-out data. This is the promotion gate: nothing past
    this point is meaningful unless a model clears it.
 2. spy_forecast_decision() -- the SPY-only decision wrapper, mirroring
@@ -24,7 +24,7 @@ run drives this passes already-fetched rows/targets in.
 from __future__ import annotations
 
 from agents import judge
-from research import forecast_model
+from strategies import forecast_model
 
 from . import metrics as equity_metrics
 
@@ -59,7 +59,7 @@ def naive_drift_direction(train_targets: list[float]) -> str:
     """The naive baseline's single, fixed prediction for every test row:
     whichever direction the TRAINING targets averaged toward. Computed
     once from train_targets only -- never recomputed from test data,
-    same discipline as research.forecast_model.fit()'s typical_abs_return."""
+    same discipline as strategies.forecast_model.fit()'s typical_abs_return."""
     avg = sum(train_targets) / len(train_targets)
     return "bullish" if avg >= 0 else "bearish"
 

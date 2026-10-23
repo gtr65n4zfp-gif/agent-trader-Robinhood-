@@ -1,5 +1,5 @@
 """
-research/forecast_model.py -- the SPY forecast seat's statistical model
+strategies/forecast_model.py -- the forecast strategy's statistical model
 (see docs/superpowers/specs/2026-07-16-forecast-seat-design.md).
 
 Plain OLS linear regression, closed-form via numpy.linalg.lstsq -- no

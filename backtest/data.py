@@ -2,16 +2,13 @@
 backtest/data.py — the historical, point-in-time data layer (see
 agents/BACKTEST_DESIGN.md, "Data layer (task 2)").
 
-Like execution/robinhood.py, the bar-parsing half of this module is
-agent-mediated: parse_bars() takes an already-fetched raw
-get_equity_historicals response (the calling agent makes that MCP call
-and passes the JSON straight through — this module never calls Robinhood
-itself). The fundamentals half calls agents.fundamentals_seat.build_brief()
-directly, since that function already makes its own live HTTP calls to
-SEC's public API (no MCP, no agent-mediation needed there — same as the
-live system).
+Like execution/robinhood.py, this module is agent-mediated: parse_bars()
+takes an already-fetched raw get_equity_historicals response (the calling
+agent makes that MCP call and passes the JSON straight through — this
+module never calls Robinhood itself), and every indicator is computed here
+from that bar series.
 
-THE CARDINAL RULE: everything here that answers "what did the council see
+THE CARDINAL RULE: everything here that answers "what did the strategy see
 on date D" must be computed from data truncated at D — see
 agents/BACKTEST_DESIGN.md's "no lookahead" section and
 backtest/prove_no_lookahead.py for the correctness proof.
@@ -196,40 +193,6 @@ def technicals_as_of(symbol: str, as_of: str, bars: list[dict], regime_ema_perio
         "regime_ema": regime_ema,
         "recent_5d_return": recent_5d_return,
     }
-
-
-def fundamentals_as_of(ticker: str, as_of: str) -> dict:
-    """Thin wrapper over agents.fundamentals_seat.build_brief() — this
-    seat already makes its own live HTTP calls directly (no MCP, no
-    agent-mediation, same as the live system), so no parsing layer is
-    needed here, just the as_of passthrough. The caller still forms the
-    actual verdict (stance/confidence/reasons) by reading this brief —
-    see BACKTEST_DESIGN.md's "Cost strategy" for the per-filing-boundary
-    caching this is meant to be called under, not per-day."""
-    from agents import fundamentals_seat
-    return fundamentals_seat.build_brief(ticker, as_of=as_of)
-
-
-def council_bundle_for(symbol: str, as_of: str, bars: list[dict], regime_ema_period: int,
-                        fundamentals_verdict: dict) -> dict | None:
-    """
-    Combine technicals_as_of() with an already-formed Fundamentals verdict
-    into the same shape the council pipeline expects:
-    {price, atr_pct, rsi, ema, regime_ema, fundamentals_verdict}.
-
-    fundamentals_verdict: agents.fundamentals_seat.form_verdict() output,
-    looked up by the caller from the per-filing-boundary cache (see
-    backtest/engine.py) — this function does not form it and does not
-    call an LLM.
-
-    Returns None (skip this symbol/date, same fail-safe convention as
-    automation/run_pass.py) if technicals_as_of() couldn't produce a
-    reading for this date.
-    """
-    tech = technicals_as_of(symbol, as_of, bars, regime_ema_period)
-    if tech is None:
-        return None
-    return {**tech, "fundamentals_verdict": fundamentals_verdict}
 
 
 if __name__ == "__main__":

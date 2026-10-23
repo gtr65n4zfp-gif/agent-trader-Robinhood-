@@ -3,7 +3,7 @@ agents/forecast_seat.py — the forecast seat (see
 docs/superpowers/specs/2026-07-16-forecast-seat-design.md).
 
 Domain-isolated like every other seat: only ever touches already-computed
-features (research.forecast_model.predict()'s inputs) and an already-fit
+features (strategies.forecast_model.predict()'s inputs) and an already-fit
 model dict -- never fetches data, never fits a model itself. Same
 bullish/bearish/neutral + confidence shape as agents.technicals.build_view(),
 so judge-style conjunctive gates can consume it identically.
@@ -21,7 +21,7 @@ Two distinct "missing" cases, handled differently on purpose:
 
 from __future__ import annotations
 
-from research import forecast_model
+from strategies import forecast_model
 
 
 def build_view(symbol: str, features: dict | None, model: dict) -> dict:
@@ -31,7 +31,7 @@ def build_view(symbol: str, features: dict | None, model: dict) -> dict:
     be derived by the caller as (price - ema) / ema from backtest.data.
     technicals_as_of()'s bundle; the other three keys (rsi, atr_pct,
     recent_5d_return) are direct bundle keys.
-    model: a fitted model dict (research.forecast_model.load_model()
+    model: a fitted model dict (strategies.forecast_model.load_model()
     output) -- required, never None.
 
     Returns {seat, symbol, stance, confidence, reasons}.
@@ -39,7 +39,7 @@ def build_view(symbol: str, features: dict | None, model: dict) -> dict:
     if model is None:
         raise ValueError(
             f"{symbol}: no forecast model supplied -- caller must "
-            "research.forecast_model.load_model() first"
+            "strategies.forecast_model.load_model() first"
         )
 
     symbol = symbol.upper()

@@ -4,7 +4,7 @@ and zero real paper-order risk (AUTOMATION_DRY_RUN stays True throughout).
 
 Three separate, deterministic passes:
   1. A realistic mixed bundle: a held position that hits take-profit (the
-     exit sweep), an aligned-bullish entry, a seat-disagreement hold, and
+     exit sweep), a confident-bullish entry, a neutral-signal hold, and
      a regime-blocked sit-out — proving exit-sweep-then-entries ordering,
      dry-run logging without execution, regime tagging, and the summary
      + round-trip stats.
@@ -56,12 +56,8 @@ def _fundamentals(symbol: str, sector: str = "Electronic Technology") -> dict:
     return {"data": {"results": [{"symbol": symbol, "sector": sector}]}}
 
 
-def _verdict(symbol: str, stance: str, confidence: float, reason: str) -> dict:
-    return {"seat": "fundamentals", "symbol": symbol, "stance": stance, "confidence": confidence, "reasons": [reason]}
-
-
 def _build_symbol_bundle(symbol: str, price: float, ema: float, rsi: float, regime_ema: float,
-                          atr_pct: float, fundamentals: dict, timestamp: str = "2026-07-15T14:25:00Z",
+                          atr_pct: float, timestamp: str = "2026-07-15T14:25:00Z",
                           has_traded: bool = True) -> dict:
     return {
         "quote": _quote(symbol, price, timestamp, has_traded=has_traded),
@@ -70,7 +66,6 @@ def _build_symbol_bundle(symbol: str, price: float, ema: float, rsi: float, regi
         "ema": _indicator(symbol, "ema", 9, ema),
         "regime_ema": _indicator(symbol, "ema", config.REGIME_EMA_LOOKBACK_DAYS, regime_ema),
         "robinhood_fundamentals": _fundamentals(symbol),
-        "fundamentals_verdict": fundamentals,
     }
 
 
@@ -81,25 +76,23 @@ def _build_bundle() -> dict:
         # pass's price is set to clear TAKE_PROFIT_PCT -- proves the exit sweep.
         "JPM": _build_symbol_bundle(
             "JPM", price=180.09, ema=175.0, rsi=50.0, regime_ema=178.0, atr_pct=ref,
-            fundamentals=_verdict("JPM", "neutral", 0.3, "demo: irrelevant, price alone triggers take_profit"),
         ),
-        # AAPL: aligned bullish -> Judge says buy.
+        # AAPL: confident bullish signal (price above EMA, RSI oversold),
+        # tradeable regime -> Judge says buy.
         "AAPL": _build_symbol_bundle(
             "AAPL", price=210.0, ema=200.0, rsi=25.0, regime_ema=195.0, atr_pct=ref,
-            fundamentals=_verdict("AAPL", "bullish", 0.7, "demo: strong earnings growth"),
         ),
-        # MSFT: seats disagree (fundamentals bullish, technicals bearish) -> hold.
-        # Regime is deliberately tradeable here so the hold is attributable to
-        # disagreement, not the regime filter.
+        # MSFT: neutral strategy signal (price inside the EMA band, RSI in the
+        # neutral range) -> plain hold. Regime is deliberately tradeable here
+        # so the hold is attributable to the signal having no edge, not the
+        # regime filter.
         "MSFT": _build_symbol_bundle(
-            "MSFT", price=300.0, ema=310.0, rsi=75.0, regime_ema=290.0, atr_pct=ref,
-            fundamentals=_verdict("MSFT", "bullish", 0.7, "demo: bullish fundamentals"),
+            "MSFT", price=300.0, ema=300.4, rsi=50.0, regime_ema=290.0, atr_pct=ref,
         ),
-        # GOOGL: both seats strongly bullish, but regime is low_vol_ranging ->
-        # forced sit-out, proving the filter tightens regardless of the seats.
+        # GOOGL: strongly bullish signal, but regime is low_vol_ranging ->
+        # forced sit-out, proving the filter tightens regardless of the signal.
         "GOOGL": _build_symbol_bundle(
             "GOOGL", price=140.0, ema=134.0, rsi=20.0, regime_ema=139.9, atr_pct=ref * 0.3,
-            fundamentals=_verdict("GOOGL", "bullish", 0.8, "demo: deliberately strong, to prove regime overrides it"),
         ),
     }
 
@@ -184,13 +177,11 @@ def run_demo() -> None:
     # WMT: well-formed, but its own venue timestamp is 5 days old.
     bad_bundle["WMT"] = _build_symbol_bundle(
         "WMT", price=90.0, ema=88.0, rsi=40.0, regime_ema=89.0, atr_pct=config.TARGET_DAILY_VOL_PCT,
-        fundamentals=_verdict("WMT", "bullish", 0.6, "demo: would otherwise be a fine entry"),
         timestamp="2026-07-10T14:00:00Z",  # days before IN_HOURS_NOW
     )
     # XOM: fresh timestamp, but has_traded=False -> fails to parse at all.
     bad_bundle["XOM"] = _build_symbol_bundle(
         "XOM", price=115.0, ema=112.0, rsi=45.0, regime_ema=113.0, atr_pct=config.TARGET_DAILY_VOL_PCT,
-        fundamentals=_verdict("XOM", "bullish", 0.6, "demo: would otherwise be a fine entry"),
         has_traded=False,
     )
 

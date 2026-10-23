@@ -51,19 +51,6 @@ def trading_days(bars_by_symbol: dict[str, list[dict]], start: str, end: str) ->
     return sorted(all_dates)
 
 
-def verdict_for(symbol: str, as_of: str, fundamentals_cache: dict) -> dict | None:
-    """Look up the most recent cached Fundamentals verdict with a
-    boundary date <= as_of for `symbol` — the per-filing-boundary caching
-    strategy from BACKTEST_DESIGN.md's "Cost strategy". None if no
-    boundary has been reached yet — the caller skips this (symbol, date),
-    same fail-safe convention as a missing quote."""
-    boundaries = fundamentals_cache.get(symbol, {})
-    eligible = [d for d in boundaries if d <= as_of]
-    if not eligible:
-        return None
-    return boundaries[max(eligible)]
-
-
 def _run_dir(run_id: str) -> str:
     path = os.path.join(config.LOG_DIR, "backtests", run_id)
     os.makedirs(path, exist_ok=True)
@@ -87,18 +74,18 @@ def run_backtest(
     start: str,
     end: str,
     bars_by_symbol: dict[str, list[dict]],
-    fundamentals_cache: dict,
 ) -> dict:
     """
     Step through [start, end] date by date for `symbols`, running the real
-    council pipeline against three isolated accounts. See module docstring.
+    strategy pipeline against three isolated accounts. See module docstring.
 
     bars_by_symbol: {symbol: data.parse_bars() output} — FULL fetched
     history (including warm-up before `start`), truncated internally per
     date by data.technicals_as_of().
-    fundamentals_cache: {symbol: {boundary_date: form_verdict() output}} —
-    pre-formed by the interactive pre-pass (see BACKTEST_DESIGN.md's cost
-    strategy), never formed by this function — it makes no LLM calls.
+
+    The whole pipeline is now pure rule-based Python (regime + technicals +
+    judge), so this function makes no LLM calls and needs no pre-pass cache
+    — a plain, deterministic replay.
 
     Returns a run summary; the actual trade-by-trade results live in each
     account's isolated trades.jsonl, read by backtest/metrics.py after.
@@ -123,13 +110,9 @@ def run_backtest(
         views: dict[str, dict] = {}
         prices: dict[str, float] = {}
         for symbol in symbols:
-            fverdict = verdict_for(symbol, date_str, fundamentals_cache)
-            if fverdict is None:
-                symbols_skipped_total += 1
-                continue
-            bundle = backtest_data.council_bundle_for(
+            bundle = backtest_data.technicals_as_of(
                 symbol, date_str, bars_by_symbol.get(symbol, []),
-                config.REGIME_EMA_LOOKBACK_DAYS, fverdict,
+                config.REGIME_EMA_LOOKBACK_DAYS,
             )
             if bundle is None:
                 symbols_skipped_total += 1
@@ -138,7 +121,6 @@ def run_backtest(
             views[symbol] = {
                 "regime": regime.regime_stance(symbol, bundle["price"], ema=bundle["regime_ema"], atr_pct=bundle["atr_pct"]),
                 "technicals": technicals.build_view(symbol, bundle["price"], ema=bundle["ema"], rsi=bundle["rsi"], atr_pct=bundle["atr_pct"]),
-                "fundamentals": fverdict,
                 "atr_pct": bundle["atr_pct"],
             }
 
@@ -180,7 +162,7 @@ def run_backtest(
             v = views[symbol]
             signal = exits.evaluate_exits(
                 entry_price, prices[symbol],
-                fundamentals=v["fundamentals"], technicals=v["technicals"], regime=v["regime"],
+                technicals=v["technicals"], regime=v["regime"],
             )
             if signal is None:
                 continue
@@ -200,7 +182,7 @@ def run_backtest(
         for symbol, v in views.items():
             if symbol in council_broker.positions:
                 continue
-            decision = judge.decide(v["fundamentals"], v["technicals"], regime=v["regime"])
+            decision = judge.decide(v["technicals"], regime=v["regime"])
             if decision["action"] == "hold":
                 continue
             try:
@@ -215,9 +197,9 @@ def run_backtest(
                 pass  # risk-vetoer veto or insufficient cash — same "no path around the gate" as live
 
         # --- Baseline: exit sweep (mechanical paths only), then entries -
-        # Deliberately NOT passing fundamentals/technicals here: skips
-        # conviction_drop (which would otherwise call the REAL judge.decide
-        # internally, muddying a clean baseline-vs-council comparison) —
+        # Deliberately NOT passing technicals here: skips conviction_drop
+        # (which would otherwise call the REAL judge.decide internally,
+        # muddying a clean baseline-vs-council comparison) —
         # stop_loss/take_profit/regime_change still apply. See
         # BACKTEST_DESIGN.md's "Engine" section.
         for symbol, shares in list(baseline_broker.positions.items()):
@@ -242,7 +224,7 @@ def run_backtest(
         for symbol, v in views.items():
             if symbol in baseline_broker.positions:
                 continue
-            decision = judge.baseline_decide(v["fundamentals"], v["technicals"])
+            decision = judge.baseline_decide(v["technicals"])
             if decision["action"] == "hold":
                 continue
             try:

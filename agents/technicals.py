@@ -1,18 +1,18 @@
 """
-Technicals seat — third seat of the trade council (see agents/COUNCIL_DESIGN.md).
+Technicals strategy — the council's primary strategy signal (see
+agents/COUNCIL_DESIGN.md).
 
 Domain-isolated: only ever touches parsed market data from
-execution/robinhood.py (price, ATR, RSI, EMA). Never sees SEC filings or
-financials — that's the Fundamentals seat's job. Opines on short-term
-setup and momentum, not long-term thesis.
+execution/robinhood.py (price, ATR, RSI, EMA). Opines on short-term setup
+and momentum — a rule-based trend/mean-reversion signal.
 
-Unlike agents/fundamentals_seat.py, this seat's stance is rule-based, not
-agent-judged: classic technical signals (price vs. its trend line, RSI
-overbought/oversold) reduce cleanly to fixed thresholds, the same way the
-risk vetoer's checks do — there's no "is this a good business"-style
-judgment call here, just "is price above its EMA" and "is momentum
-stretched." Keeping it mechanical also keeps it fully reproducible and
-auditable, same reasoning as agents/risk_vetoer.py.
+This signal's stance is rule-based, not agent-judged: classic technical
+signals (price vs. its trend line, RSI overbought/oversold) reduce cleanly
+to fixed thresholds, the same way the risk vetoer's checks do — just "is
+price above its EMA" and "is momentum stretched." Keeping it mechanical
+keeps it fully reproducible, auditable, and backtestable, same reasoning as
+agents/risk_vetoer.py. It's the first entry in the project's strategy
+library; the forecast model in strategies/ is the next candidate signal.
 
 build_view() takes already-parsed inputs (from execution/robinhood.py's
 get_quote/get_atr_pct/get_rsi/get_ema — this module does not call any MCP

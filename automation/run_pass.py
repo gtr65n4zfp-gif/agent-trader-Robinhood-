@@ -1,16 +1,17 @@
 """
 automation/run_pass.py — one full, unattended council pass: exit sweep
-first (manage what we hold), then entries (regime -> seats -> judge,
-no-trade default) across config.WATCHLIST. This is the ONLY entrypoint a
-scheduled routine calls — see agents/AUTOMATION_DESIGN.md for the wake
-cadence and what the routine does before calling in (fetching the bundle).
+first (manage what we hold), then entries (regime -> strategy signal ->
+judge, no-trade default) across config.WATCHLIST. This is the ONLY
+entrypoint a scheduled routine calls — see agents/AUTOMATION_DESIGN.md for
+the wake cadence and what the routine does before calling in (fetching the
+bundle).
 
 Like every other data-touching module in this project, this function
 fetches nothing itself — agent-mediated by the same architecture as
 agents/demo_council.py: the calling agent (a scheduled Claude Code
 routine, per AUTOMATION_DESIGN.md — never a headless daemon, since
 Robinhood's MCP can't run without an authenticated session) has already
-made the MCP calls and formed each symbol's Fundamentals verdict.
+made the MCP calls for each symbol.
 
 FAIL-SAFE BY DESIGN — hard rules, see AUTOMATION_DESIGN.md for the full
 rationale:
@@ -44,10 +45,9 @@ config.WATCHLIST), each value shaped exactly like agents.demo_council's
 per-symbol bundle:
     "quote", "atr", "rsi", "ema", "regime_ema", "robinhood_fundamentals":
         raw MCP responses (see agents/demo_council.py's docstring for the
-        exact call shape each one needs)
-    "fundamentals_verdict":
-        agents.fundamentals_seat.form_verdict() output, formed by the
-        calling agent from build_brief(symbol)
+        exact call shape each one needs). "robinhood_fundamentals" is
+        Robinhood's own fundamentals response, used only to resolve the
+        symbol's sector for the Risk vetoer — not a strategy input.
 """
 
 
@@ -79,14 +79,12 @@ def _extract_symbol_data(symbol: str, sym_bundle: dict, now: datetime) -> dict |
         ema = robinhood.get_ema(symbol, sym_bundle["ema"])
         regime_ema = robinhood.get_regime_ema(symbol, sym_bundle["regime_ema"])
         sector_map = robinhood.get_sectors([symbol], sym_bundle["robinhood_fundamentals"])
-        fundamentals_verdict = sym_bundle["fundamentals_verdict"]
     except (RobinhoodDataError, KeyError, ValueError, TypeError):
         return None
 
     return {
         "price": price, "atr_pct": atr_pct, "rsi": rsi, "ema": ema,
         "regime_ema": regime_ema, "sector_map": sector_map,
-        "fundamentals_verdict": fundamentals_verdict,
         "age_minutes": round(age_minutes, 1),
     }
 
@@ -159,7 +157,6 @@ def run_pass(bundle: dict[str, dict], now: datetime | None = None, broker: Paper
             "regime": regime.regime_stance(symbol, data["price"], ema=data["regime_ema"], atr_pct=data["atr_pct"]),
             "technicals": technicals.build_view(symbol, data["price"], ema=data["ema"], rsi=data["rsi"],
                                                  atr_pct=data["atr_pct"]),
-            "fundamentals": data["fundamentals_verdict"],
         }
 
     known_prices = {sym: d["price"] for sym, d in parsed.items()}
@@ -174,7 +171,7 @@ def run_pass(bundle: dict[str, dict], now: datetime | None = None, broker: Paper
         v = views[symbol]
         signal = exits.evaluate_exits(
             entry_price, parsed[symbol]["price"],
-            fundamentals=v["fundamentals"], technicals=v["technicals"], regime=v["regime"],
+            technicals=v["technicals"], regime=v["regime"],
         )
         if signal is None:
             continue
@@ -208,10 +205,11 @@ def run_pass(bundle: dict[str, dict], now: datetime | None = None, broker: Paper
         if symbol in broker.positions:
             continue  # already held — the exit sweep above owns it this pass
         v = views[symbol]
-        decision = judge.decide(v["fundamentals"], v["technicals"], regime=v["regime"])
-        # Baseline stays regime-blind on purpose (see agents/judge.py) —
-        # logged unconditionally, same as every manual run's ablation hook.
-        baseline = judge.baseline_decide(v["fundamentals"], v["technicals"])
+        decision = judge.decide(v["technicals"], regime=v["regime"])
+        # Baseline stays regime-blind and threshold-blind on purpose (see
+        # agents/judge.py) — logged unconditionally, same as every manual
+        # run's ablation hook.
+        baseline = judge.baseline_decide(v["technicals"])
         trade_log.record(
             "baseline", symbol, baseline["target_quantity"], data["price"], paper=True,
             reason=baseline["rationale"],

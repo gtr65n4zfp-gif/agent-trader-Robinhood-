@@ -126,12 +126,16 @@ stabilize small in-season samples — a stabilizer/component, never the model.
 
 ## How it maps onto this repo's existing machinery
 
-The council architecture transfers almost directly; only the domains change.
+The strategy-gate architecture transfers almost directly; only the domains
+change. (The equity system's SEC-fundamentals track has since been retired in
+favor of backtestable strategies — see README's "History" — which if anything
+makes the mapping cleaner: a baseball win-probability model is exactly the kind
+of measurable strategy signal that refocus was about.)
 
 | Equity system (existing)                     | Kalshi baseball equivalent                                                                 |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `research/` (SEC filings)                    | `baseball/` data layer — MLB Stats API / pybaseball, cached; no live-network dependency in tests |
-| Fundamentals + Technicals seats              | **Model seat** (our calibrated win prob) + **Market seat** (is the contract mispriced vs. our prob, net of fees?) — domain-isolated as before |
+| `strategies/` + `backtest/` data layer       | `baseball/` data layer — MLB Stats API / pybaseball, cached; no live-network dependency in tests |
+| Technicals strategy signal                   | **Model seat** (our calibrated win prob) + **Market seat** (is the contract mispriced vs. our prob, net of fees?) — two domain-isolated strategy signals |
 | Regime filter (sit out choppy conditions)    | **Edge gate**: only bet when \|model_prob − implied_prob\| clears fees + a margin; sit out otherwise |
 | Risk vetoer + `PaperBroker`                  | Kalshi **paper broker**; **fractional-Kelly** stake sizing with a hard cap; same per-day / drawdown breakers |
 | Judge (conjunctive, no-trade default)        | Same — a bet fires only if model edge **and** market seat **and** risk vetoer all clear    |

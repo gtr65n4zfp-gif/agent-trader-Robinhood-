@@ -1,26 +1,40 @@
 # Agent Trader
 
-An AI-driven trading system that connects to Robinhood (via their MCP server) and
-makes **paper trades first**, with the goal of graduating to small real-money trades
-only after it proves itself.
+A **strategy-driven** trading system that connects to Robinhood (via their MCP
+server) and makes **paper trades first**, with the goal of graduating to small
+real-money trades only after a strategy proves itself.
 
 ## Guiding principle
 
-> No real money until the system is provably profitable in paper trading over a
-> meaningful stretch of time. Every layer is built and verified on its own before
-> the next one is added.
+> No real money until a strategy is provably profitable in paper trading over a
+> meaningful stretch of time. Every strategy is built and backtested on its own
+> before it's allowed anywhere near the live loop. The edge is discipline (only
+> trading when a validated signal has a real edge, and not overtrading), not any
+> single signal's cleverness.
 
-## The three layers (built in this order)
+## What this is (and what it deliberately isn't)
+
+This is a **library of systematic trading strategies** — each one a defined,
+rule-based or model-based signal that is individually backtested and run behind
+a shared risk-and-regime gate. It is **not** a discretionary "is this a good
+company" engine: the project started with an SEC-fundamentals research agent and
+a two-seat (fundamentals + technicals) council, and that fundamentals track has
+been **retired** in favor of strategies that can be measured against historical
+data. (See the git history and the "History" note below if you're looking for it.)
+
+## The layers (built in this order)
 
 1. **Execution layer** (`execution/`) — talks to the Robinhood MCP. Reads the
-   account, places *paper* trades. This is the foundation; nothing else works
-   without it.
-2. **SEC research agent** (`research/`) — pulls official SEC filings, turns them
-   into structured data + plain-English reports the other agents can consume.
-   Self-contained and useful on its own.
-3. **The council** (`agents/`) — multiple agents that debate whether a proposed
-   trade is worth it (short-term risk vs long-term thesis) before it's placed.
-   Built last, because it needs the other two to have anything to reason about.
+   account, places *paper* trades, enforces every risk cap. This is the
+   foundation; nothing else works without it.
+2. **Strategies** (`strategies/`, `agents/technicals.py`) — self-contained,
+   individually backtestable signals. Each is domain-isolated to the market data
+   it needs and emits a uniform `{stance, confidence, reasons}` view. Today's
+   library: the rule-based **Technicals** signal (live) and a quant **forecast
+   model** (in backtest validation).
+3. **The gate** (`agents/`) — the regime filter, the Judge (the strategy
+   arbiter), and the Risk vetoer decide whether a strategy's signal actually
+   becomes a trade. No-trade is the default.
 
 ## Current status
 
@@ -38,34 +52,40 @@ only after it proves itself.
             automation entry below)
       - [ ] Real order placement stays behind `assert_paper_mode()` and the
             `AGENT_TRADER_LIVE` unlock phrase until profitability is proven
-- [x] Milestone 2: SEC research agent
-      - [x] Data client: ticker->CIK, recent filings, financial facts (`research/sec_client.py`)
-      - [x] Handle inconsistent XBRL tags — tag-candidate fallback + a proper
-            YoY (not just sequential) comparison (`agents/fundamentals_seat.py`)
-      - [x] Report layer: plain-English + structured company report, agent-
-            authored from a structured brief (`research/report.py`)
-- [x] Milestone 3: The council (trade review agents) — see `agents/COUNCIL_DESIGN.md` for the blueprint
-      - [x] Risk vetoer seat — trade-size, volatility-scaled position, sector,
+- [x] Milestone 2: Strategy library
+      - [x] Technicals strategy — rule-based price/EMA/RSI momentum /
+            mean-reversion signal, the live library's first entry
+            (`agents/technicals.py`)
+      - [x] Forecast strategy (quant) — plain OLS return model over
+            momentum/mean-reversion/volatility features, in backtest
+            validation, not yet in the live gate (`strategies/forecast_model.py`,
+            `agents/forecast_seat.py`, `backtest/forecast_backtest.py`)
+      - [~] RETIRED: the SEC-fundamentals research agent and the two-seat
+            (fundamentals + technicals) council it fed. Dropped when the
+            project refocused on backtestable strategies — a "is this a
+            good business" discretionary thesis can't be measured against
+            historical price data the way a signal can. Removed:
+            `research/sec_client.py`, `research/report.py`,
+            `agents/fundamentals_seat.py` (see git history).
+- [x] Milestone 3: The gate (regime + judge + risk vetoer) — see `agents/COUNCIL_DESIGN.md` for the blueprint
+      - [x] Risk vetoer — trade-size, volatility-scaled position, sector,
             drawdown, and daily-loss/frequency caps; structurally enforced
             inside `PaperBroker` (`agents/risk_vetoer.py`)
-      - [x] Fundamentals seat — SEC-only structured brief, judgment stays
-            agent-formed by design (`agents/fundamentals_seat.py`)
-      - [x] Technicals seat — rule-based price/EMA/RSI stance, domain-isolated
-            from fundamentals (`agents/technicals.py`)
-      - [x] Judge — conjunctive gate (no-trade-by-default) combining seat
-            outputs into buy/sell/hold; never executes directly
-            (`agents/judge.py`)
-      - [x] Ablation/baseline hook — a non-isolated single-model shadow
-            decision logged alongside every real one, never acted on
-      - [x] End-to-end proof: Fundamentals + Technicals -> Judge -> PaperBroker
+      - [x] Judge — the strategy gate (no-trade-by-default): a confident,
+            directional signal behind the regime filter becomes buy/sell,
+            everything else holds; never executes directly (`agents/judge.py`)
+      - [x] Ablation/baseline hook — a no-gate baseline (raw signal, no
+            regime filter, no confidence threshold) logged alongside every
+            real decision, never acted on
+      - [x] End-to-end proof: Technicals -> Judge -> PaperBroker
             (Risk vetoer still the final word) -> trade_log, verified live
             against real AAPL data for both a buy attempt (correctly vetoed
             on an already-over-concentrated account) and a hold
             (`agents/demo_council.py`)
       - [x] Exit logic — stop-loss, take-profit, and conviction-drop (a fresh
-            Judge re-decision that no longer supports holding), disjunctive
-            (first to fire wins); regime-change left as an explicit seam,
-            not built (`agents/exits.py`)
+            Judge re-decision on the strategy signal that no longer supports
+            holding), disjunctive (first to fire wins); regime-change left as
+            an explicit seam, not built (`agents/exits.py`)
       - [x] Cost-basis tracking, honest fills (slippage modeled on every
             fill so paper P&L isn't a fantasy of free perfect execution),
             and realized P&L on every close (`execution/paper_broker.py`)
@@ -82,8 +102,8 @@ only after it proves itself.
             distinctly (`regime_sitout`) and never counts as a round-trip
             (`agents/regime.py`)
       - [x] End-to-end proof: a favorable regime let a trade through, an
-            unfavorable one forced a HOLD despite both seats being strongly
-            bullish (and didn't move the round-trip counter), and a regime
+            unfavorable one forced a HOLD despite a strongly bullish signal
+            (and didn't move the round-trip counter), and a regime
             flip closed a held position via `regime_change` — all
             deterministic, verified live (`agents/demo_regime.py`)
       - [x] Fixed: regime and Technicals were deriving trend from the same
@@ -129,29 +149,28 @@ only after it proves itself.
 - [ ] Milestone 4: Backtest / track paper P&L over time
 - [ ] Milestone 5: Real-money pilot — blocked until the go-live gate below is met
 - [ ] Milestone 6: Universe expansion — a screening/universe-selection funnel so
-      the council can look at a whole market instead of a hand-picked watchlist.
+      a strategy can look at a whole market instead of a hand-picked watchlist.
       Deliberately deferred: the current one-symbol-at-a-time, agent-mediated MCP
       path can't scan thousands of tickers, so this needs a *bulk, programmatic*
       market-data source (not the interactive MCP) feeding a cheap quant screen
-      that narrows the universe to a shortlist the existing council then analyzes.
-      Not to be built until the council has proven an edge on the watchlist —
+      that narrows the universe to a shortlist the existing strategies then analyze.
+      Not to be built until a strategy has proven an edge on the watchlist —
       widening intake before the engine is validated is premature. The crux
       decision is the bulk data source; design before code.
 
 ## Parking lot (deferred ideas)
 
-Things worth doing eventually, deliberately NOT built now — the council hasn't
-yet shown it beats its own regime-blind baseline in backtest, so new surface
-area (new seats, new data sources) is on hold until that's resolved. Revisit
-after the live dry-run has real days behind it and the win-rate/entry-quality
-question is understood.
+Things worth doing eventually, deliberately NOT built now — no strategy has yet
+shown it beats its own no-gate baseline in backtest, so new surface area (new
+strategies, new data sources) is on hold until that's resolved. Revisit after
+the live dry-run has real days behind it and the win-rate/entry-quality question
+is understood.
 
-- **QuiverQuant seat** — official MCP (`mcp.quiverquant.com`, ~$30/mo) for
-  congressional trades, insider activity, lobbying, gov contracts, 13F
-  holdings, dark-pool volume. Real, legitimate alt-data (not hype like the
-  rhood-rs/TikTok detours), but the "follow congressional trades" edge is
-  contested (reporting lag, crowded trade) and it'd be a brand-new seat +
-  paid dependency on a council that hasn't proven itself yet.
+- **A second independent strategy in the live gate** — the quant forecast model
+  (`strategies/forecast_model.py`) is the obvious candidate: once it clears its
+  own backtest (beating the naive-drift baseline on held-out data), promote it
+  alongside Technicals so the gate becomes conjunctive again — two independent
+  strategies that must agree. Blocked on that promotion gate, not plumbing.
 - **Correlation filter** — a more general version of the existing
   `MAX_SECTOR_PCT` cap: block piling into another position that's highly
   correlated with existing holdings even when they don't share a sector.
@@ -186,12 +205,27 @@ Until every box above is checked, real trading stays blocked by
 
 ```
 agent-trader/
-├── agents/       # the council (trade-review agents) — later
+├── agents/       # the gate: regime filter, judge, risk vetoer, exits
+├── strategies/   # the strategy library (signal models)
+├── backtest/     # historical replay + per-strategy validation
 ├── execution/    # Robinhood MCP connection + paper trading
-├── research/     # SEC filings agent — later
+├── automation/   # the scheduled unattended pass
 ├── config/       # settings, .env (never committed)
 └── logs/         # trade logs, decisions, P&L history
 ```
+
+## History
+
+This project began as an SEC-fundamentals research agent feeding a two-seat
+council (a Fundamentals seat debating long-term thesis vs. a Technicals seat on
+short-term setup). That fundamentals track was **retired** when the project
+refocused on systematic, backtestable strategies: a discretionary "good
+business?" judgment can't be scored against historical price data the way a
+signal can, and the edge we care about is a measurable one. The council
+machinery (domain isolation, no-trade-by-default, the ablation baseline) carried
+over; it now gates one validated strategy signal at a time, built to add more
+back into a conjunctive gate as each clears its own backtest. The removed code
+lives in git history.
 
 ## Safety rules (non-negotiable while we build)
 

@@ -3,12 +3,16 @@ backtest/options_engine.py — SPY-only technicals+regime decision gate,
 and pure option-trade simulation over already-fetched daily bars (see
 agents/OPTIONS_BACKTEST_DESIGN.md).
 
-technicals_only_decision() is an ISOLATED exception for this backtest —
-SPY's Fundamentals leg is confirmed structurally empty (ETF trusts don't
-file the 10-K/10-Q reports agents.fundamentals_seat's SEC concepts come
-from), so this mirrors agents.judge.decide()'s gate logic with the
-Fundamentals requirement dropped. This does NOT modify judge.py, and is
-never used for any symbol other than SPY in this experiment.
+technicals_only_decision() mirrors agents.judge.decide()'s gate logic
+(regime gate first, then a confident directional Technicals signal). It
+predates the project's refocus on strategies — back when the live Judge
+also required a now-retired SEC Fundamentals leg, this was the SPY-only
+exception that dropped it (SPY, an ETF trust, files no 10-K/10-Q, so there
+were no SEC concepts to form a fundamentals view from). The live Judge is
+now itself technicals-driven, so this function's gate matches it; it's kept
+as its own self-contained copy so this backtest experiment stays
+independent of future judge.py changes, and is never used for any symbol
+other than SPY.
 """
 
 from __future__ import annotations
@@ -18,11 +22,12 @@ from agents import judge
 
 def technicals_only_decision(technicals: dict, regime: dict, quantity: float = 1) -> dict:
     """
-    Same shape as judge.decide()'s return value, but the gate only
-    requires Technicals to clear judge.CONFIDENCE_THRESHOLD — there is no
-    Fundamentals leg to agree with. Regime gate is checked first, exactly
-    as judge.decide() does, and can only force a HOLD, never override one
-    (same "tighten, never loosen" principle as the live Judge).
+    Same shape — and now the same gate — as judge.decide(): a confident
+    directional Technicals signal clears judge.CONFIDENCE_THRESHOLD, with
+    the regime gate checked first and able only to force a HOLD, never
+    override one (same "tighten, never loosen" principle as the live Judge).
+    Kept as its own copy so this experiment is insulated from future
+    judge.py changes.
     """
     symbol = technicals["symbol"]
     if regime["symbol"] != symbol:
@@ -55,8 +60,8 @@ def technicals_only_decision(technicals: dict, regime: dict, quantity: float = 1
         "seat": "judge_technicals_only", "action": action, "symbol": symbol,
         "target_quantity": quantity, "confidence": round(t_conf, 4),
         "rationale": (
-            f"Technicals {t_stance} alone (confidence {t_conf}) — clears "
-            f"{judge.CONFIDENCE_THRESHOLD}; SPY has no usable Fundamentals leg "
+            f"Technicals {t_stance} (confidence {t_conf}) — clears "
+            f"{judge.CONFIDENCE_THRESHOLD}; regime not objecting "
             f"(agents/OPTIONS_BACKTEST_DESIGN.md)."
         ),
         "seat_inputs": seat_inputs,

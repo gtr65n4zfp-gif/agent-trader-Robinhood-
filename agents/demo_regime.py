@@ -5,12 +5,12 @@ with zero real-money risk:
   1. A favorable regime (clear trend, adequate volatility) lets an
      otherwise-qualifying trade through the Judge's gate.
   2. An unfavorable regime (low-volatility ranging) forces a HOLD even
-     when both seats are strongly bullish — the filter can only tighten,
-     never loosen — and that sit-out is logged distinctly (action=
+     when the strategy signal is strongly bullish — the filter can only
+     tighten, never loosen — and that sit-out is logged distinctly (action=
      "regime_sitout") without moving the round-trip counter at all.
   3. A held position whose regime flips to non-tradeable gets closed by
      the regime_change exit path, isolated from the other exit paths by
-     keeping price change small and omitting fundamentals/technicals so
+     keeping price change small and omitting the strategy signal so
      stop_loss/take_profit/conviction_drop can't be what fired.
 
 Uses an ISOLATED paper account (logs/demo_regime_portfolio.json, via
@@ -58,15 +58,10 @@ def run_demo() -> None:
     print("1. Favorable regime (normal volatility, clear uptrend)")
     print("=" * 70)
     favorable_regime = regime.regime_stance("NVDA", price=500.0, ema=480.0, atr_pct=ref)
-    nvda_fundamentals = {
-        "seat": "fundamentals", "symbol": "NVDA", "stance": "bullish",
-        "confidence": 0.7, "reasons": ["demo: strong revenue growth"],
-    }
     nvda_technicals = technicals.build_view("NVDA", price=500.0, ema=480.0, rsi=25.0)
-    decision1 = judge.decide(nvda_fundamentals, nvda_technicals, regime=favorable_regime)
+    decision1 = judge.decide(nvda_technicals, regime=favorable_regime)
 
     print(f"Regime: {favorable_regime}")
-    print(f"Fundamentals: {nvda_fundamentals['stance']} ({nvda_fundamentals['confidence']})")
     print(f"Technicals:   {nvda_technicals['stance']} ({nvda_technicals['confidence']})")
     print(f"Judge decision: {decision1}")
     assert decision1["action"] == "buy", "expected the gate to allow this trade"
@@ -74,22 +69,17 @@ def run_demo() -> None:
 
     # --- 2. Unfavorable regime: forced HOLD, logged, doesn't count ------
     print("\n" + "=" * 70)
-    print("2. Unfavorable regime (low volatility, ranging) — seats strongly bullish anyway")
+    print("2. Unfavorable regime (low volatility, ranging) — signal strongly bullish anyway")
     print("=" * 70)
     unfavorable_regime = regime.regime_stance("KO", price=80.0, ema=79.9, atr_pct=ref * 0.3)
-    ko_fundamentals = {
-        "seat": "fundamentals", "symbol": "KO", "stance": "bullish",
-        "confidence": 0.8, "reasons": ["demo: deliberately strong, to prove regime overrides it"],
-    }
     ko_technicals = technicals.build_view("KO", price=80.0, ema=76.0, rsi=20.0)
-    decision2 = judge.decide(ko_fundamentals, ko_technicals, regime=unfavorable_regime)
+    decision2 = judge.decide(ko_technicals, regime=unfavorable_regime)
 
     print(f"Regime: {unfavorable_regime}")
-    print(f"Fundamentals: {ko_fundamentals['stance']} ({ko_fundamentals['confidence']})")
     print(f"Technicals:   {ko_technicals['stance']} ({ko_technicals['confidence']})")
     print(f"Judge decision: {decision2}")
     assert decision2["action"] == "hold", "expected the regime filter to force a HOLD"
-    print("-> Forced HOLD despite both seats bullish — the filter tightened, never loosened.")
+    print("-> Forced HOLD despite a strongly bullish signal — the filter tightened, never loosened.")
 
     before = trade_log.round_trip_stats()
     trade_log.record(
@@ -118,9 +108,9 @@ def run_demo() -> None:
     # Price barely moves — nowhere near STOP_LOSS_PCT (-8%) or
     # TAKE_PROFIT_PCT (+15%) — so if something closes this position, it
     # can only be the regime_change path, not a price-based one. No
-    # fundamentals/technicals are supplied to the sweep either, so
-    # conviction_drop is skipped entirely — isolating regime_change as
-    # the only path that *can* fire here.
+    # strategy signal is supplied to the sweep either, so conviction_drop
+    # is skipped entirely — isolating regime_change as the only path that
+    # *can* fire here.
     current_price = round(entry_price * 1.01, 2)
     flipped_regime = regime.regime_stance("NVDA", price=current_price, ema=current_price * 0.999, atr_pct=ref * 0.3)
     print(f"Price barely moved ({entry_price:.2f} -> {current_price}), but regime flipped: {flipped_regime}")

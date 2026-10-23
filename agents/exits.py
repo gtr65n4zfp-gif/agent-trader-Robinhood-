@@ -80,21 +80,25 @@ def check_regime_change(regime: dict) -> dict:
 
 
 def check_conviction_drop(
-    fundamentals: dict, technicals: dict, quantity: float = judge.DEFAULT_QUANTITY
+    technicals: dict, quantity: float = judge.DEFAULT_QUANTITY
 ) -> dict:
     """
-    Re-run the Judge on a HELD symbol's fresh seat outputs. Fires if the
+    Re-run the Judge on a HELD symbol's fresh strategy signal. Fires if the
     Judge no longer supports holding it — the re-decision isn't a "buy"
     (a fresh hold or a flip to "sell" both count), or its confidence has
     fallen below CONVICTION_DROP_THRESHOLD even though direction hasn't
     changed. The original entry decision doesn't get re-litigated here;
     only whether the thesis still holds *right now*.
 
-    fundamentals / technicals: fresh agents.fundamentals_seat.form_verdict()
-    and agents.technicals.build_view() output for the held symbol — a new
-    read, not what justified the original entry.
+    This re-decision is deliberately regime-blind — the regime turning
+    against a held position is check_regime_change's job, checked ahead of
+    this one in evaluate_exits(); here we ask only whether the strategy
+    signal itself still supports the position.
+
+    technicals: fresh agents.technicals.build_view() output for the held
+    symbol — a new read, not what justified the original entry.
     """
-    redecision = judge.decide(fundamentals, technicals, quantity=quantity)
+    redecision = judge.decide(technicals, quantity=quantity)
     thesis_holds = (
         redecision["action"] == "buy"
         and redecision["confidence"] >= config.CONVICTION_DROP_THRESHOLD
@@ -110,7 +114,6 @@ def check_conviction_drop(
 def evaluate_exits(
     entry_price: float,
     current_price: float,
-    fundamentals: dict | None = None,
     technicals: dict | None = None,
     regime: dict | None = None,
     quantity: float = judge.DEFAULT_QUANTITY,
@@ -119,10 +122,10 @@ def evaluate_exits(
     Run every applicable exit path in priority order; return the first
     that fires, or None if the position should stay open.
 
-    fundamentals / technicals: optional, required only for
-    check_conviction_drop — omit either to skip that check entirely (same
-    graceful-degrade pattern as agents.risk_vetoer.review()'s optional
-    args), e.g. when fresh seat re-reads aren't available for this pass.
+    technicals: optional, required only for check_conviction_drop — omit to
+    skip that check entirely (same graceful-degrade pattern as
+    agents.risk_vetoer.review()'s optional args), e.g. when a fresh signal
+    re-read isn't available for this pass.
     regime: optional agents.regime.regime_stance() output, required only
     for check_regime_change — omit to skip that check entirely.
     """
@@ -139,8 +142,8 @@ def evaluate_exits(
         if regime_signal["fires"]:
             return regime_signal
 
-    if fundamentals is not None and technicals is not None:
-        conviction = check_conviction_drop(fundamentals, technicals, quantity=quantity)
+    if technicals is not None:
+        conviction = check_conviction_drop(technicals, quantity=quantity)
         if conviction["fires"]:
             return conviction
 
@@ -183,7 +186,7 @@ def close_position(broker: PaperBroker, symbol: str, quantity: float, price: flo
 def run_exit_sweep(
     broker: PaperBroker,
     prices: dict[str, float],
-    seat_views: dict[str, tuple[dict, dict]] | None = None,
+    seat_views: dict[str, dict] | None = None,
     regimes: dict[str, dict] | None = None,
 ) -> list[dict]:
     """
@@ -195,9 +198,9 @@ def run_exit_sweep(
 
     prices: {symbol: current_price} — a symbol with no price here is
     skipped, not treated as "no exit."
-    seat_views: optional {symbol: (fundamentals, technicals)} for the
-    conviction_drop check. A symbol missing here just skips that one
-    check for that symbol, same as evaluate_exits()'s own graceful
+    seat_views: optional {symbol: technicals} (agents.technicals.build_view()
+    output) for the conviction_drop check. A symbol missing here just skips
+    that one check for that symbol, same as evaluate_exits()'s own graceful
     degrade — stop_loss and take_profit still run regardless.
     regimes: optional {symbol: agents.regime.regime_stance() output} for
     the regime_change check. Same graceful degrade: a symbol missing here
@@ -217,9 +220,9 @@ def run_exit_sweep(
             # stop_loss/take_profit against. Not a crash, not an exit.
             continue
 
-        fundamentals, technicals = seat_views.get(symbol, (None, None)) if seat_views else (None, None)
+        technicals = seat_views.get(symbol) if seat_views else None
         symbol_regime = regimes.get(symbol) if regimes else None
-        signal = evaluate_exits(entry_price, prices[symbol], fundamentals, technicals, symbol_regime)
+        signal = evaluate_exits(entry_price, prices[symbol], technicals, symbol_regime)
         if signal is None:
             continue
 
@@ -257,23 +260,19 @@ if __name__ == "__main__":
     print("\nTake-profit: price 5% above entry (should NOT fire):")
     print(check_take_profit(entry_price=100.0, current_price=105.0))
 
-    weak_fundamentals = {
-        "seat": "fundamentals", "symbol": "AAPL", "stance": "neutral",
-        "confidence": 0.2, "reasons": ["thesis has weakened"],
+    weak_technicals = {
+        "seat": "technicals", "symbol": "AAPL", "stance": "neutral",
+        "confidence": 0.2, "reasons": ["signal has weakened to neutral"],
     }
     still_bullish_technicals = {
         "seat": "technicals", "symbol": "AAPL", "stance": "bullish",
-        "confidence": 0.6, "reasons": ["still above EMA"],
+        "confidence": 0.6, "reasons": ["still above EMA, RSI oversold"],
     }
-    print("\nConviction drop: fundamentals turned neutral, no longer aligned (should fire):")
-    print(check_conviction_drop(weak_fundamentals, still_bullish_technicals))
+    print("\nConviction drop: signal fell to neutral, no longer a confident buy (should fire):")
+    print(check_conviction_drop(weak_technicals))
 
-    still_bullish_fundamentals = {
-        "seat": "fundamentals", "symbol": "AAPL", "stance": "bullish",
-        "confidence": 0.7, "reasons": ["still strong"],
-    }
-    print("\nConviction drop: both seats still bullish and confident (should NOT fire):")
-    print(check_conviction_drop(still_bullish_fundamentals, still_bullish_technicals))
+    print("\nConviction drop: signal still bullish and confident (should NOT fire):")
+    print(check_conviction_drop(still_bullish_technicals))
 
     non_tradeable_regime = {
         "seat": "regime", "symbol": "AAPL", "state": "low_vol_ranging",
@@ -295,17 +294,15 @@ if __name__ == "__main__":
           "(priority order — stop-loss is checked first):")
     print(evaluate_exits(
         entry_price=100.0, current_price=90.0,
-        fundamentals=weak_fundamentals, technicals=still_bullish_technicals,
-        regime=non_tradeable_regime,
+        technicals=weak_technicals, regime=non_tradeable_regime,
     ))
 
     print("\nevaluate_exits: no price trigger, but regime flipped non-tradeable "
           "(regime_change should fire ahead of conviction_drop, even though both would fire):")
     print(evaluate_exits(
         entry_price=100.0, current_price=101.0,
-        fundamentals=weak_fundamentals, technicals=still_bullish_technicals,
-        regime=non_tradeable_regime,
+        technicals=weak_technicals, regime=non_tradeable_regime,
     ))
 
-    print("\nevaluate_exits: no price trigger, no seat or regime data supplied -> stays open:")
+    print("\nevaluate_exits: no price trigger, no signal or regime data supplied -> stays open:")
     print(evaluate_exits(entry_price=100.0, current_price=101.0))

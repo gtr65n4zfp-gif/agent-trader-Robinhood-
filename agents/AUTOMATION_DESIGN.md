@@ -62,9 +62,10 @@ itself):
    symbol with no fresh data this pass (outside the watchlist, or it
    failed the sanity check) is left alone, not force-closed.
 5. **Then entries.** For every watchlist symbol not already held: regime
-   -> Fundamentals + Technicals -> Judge, no-trade-by-default. The
-   regime-blind single-model baseline is logged unconditionally either
-   way (the ablation hook), same as every manual run.
+   -> strategy signal (Technicals) -> Judge, no-trade-by-default. The
+   no-gate baseline (raw signal, no regime filter, no confidence
+   threshold) is logged unconditionally either way (the ablation hook),
+   same as every manual run.
 6. **Route or log, per `config.AUTOMATION_DRY_RUN`.** True (the shipped
    default): every entry/exit decision is fully evaluated and logged
    (`action="dry_run_entry"`/`"dry_run_exit"`) but `PaperBroker.buy()`/
@@ -105,14 +106,14 @@ DST shift) whose prompt, on each wake, tells the agent to:
    Python. If closed, call `run_pass({})` directly (it short-circuits on
    the market-hours guard before ever touching the bundle) to still log
    the `automation_noop` entry, and stop there — no point spending
-   Robinhood/SEC calls on a day nothing will trade.
+   Robinhood calls on a day nothing will trade.
 1. Confirm the Robinhood MCP session is authenticated (re-auth if not).
 2. For every symbol in `config.WATCHLIST`: call `get_equity_quotes`,
    `get_equity_technical_indicators` (type=atr/rsi/ema, and a second call
    at `period=config.REGIME_EMA_LOOKBACK_DAYS` for the regime EMA), and
-   `get_equity_fundamentals`; pull SEC data and form each symbol's
-   Fundamentals verdict (`agents.fundamentals_seat.form_verdict()`) the
-   same way a manual run does.
+   `get_equity_fundamentals` (Robinhood's own — used only to resolve the
+   symbol's sector for the Risk vetoer, not a strategy input). No SEC
+   data is fetched any more; the whole pipeline is rule-based market data.
 3. Assemble the bundle in the shape `automation/run_pass.py` expects.
 4. Call `run_pass(bundle)`.
 5. Report the run summary.

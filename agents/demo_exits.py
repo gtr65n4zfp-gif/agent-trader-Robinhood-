@@ -83,20 +83,15 @@ def run_demo() -> None:
     # KO: push well past TAKE_PROFIT_PCT above its entry fill.
     ko_price = round(broker.cost_basis["KO"] * (1 + config.TAKE_PROFIT_PCT + 0.02), 2)
     # XOM: price unchanged — only conviction_drop should fire, forced by a
-    # fresh Fundamentals/Technicals re-read that no longer supports holding.
+    # fresh strategy-signal re-read that no longer supports holding.
     xom_price = broker.cost_basis["XOM"]
     current_prices = {"JNJ": jnj_price, "KO": ko_price, "XOM": xom_price}
 
-    weakened_fundamentals = {
-        "seat": "fundamentals", "symbol": "XOM", "stance": "neutral", "confidence": 0.2,
-        "reasons": ["demo: fresh re-read — the thesis that justified opening this position has weakened"],
-    }
     weakened_technicals = technicals.build_view("XOM", price=xom_price)  # no EMA/RSI -> neutral, 0 confidence
-    seat_views = {"XOM": (weakened_fundamentals, weakened_technicals)}
+    seat_views = {"XOM": weakened_technicals}
 
     print(f"\nForced prices for the exit sweep: {current_prices}")
-    print(f"XOM re-read for conviction_drop: fundamentals={weakened_fundamentals['stance']} "
-          f"({weakened_fundamentals['confidence']}), technicals={weakened_technicals['stance']} "
+    print(f"XOM re-read for conviction_drop: technicals={weakened_technicals['stance']} "
           f"({weakened_technicals['confidence']})")
 
     closures = exits.run_exit_sweep(broker, current_prices, seat_views=seat_views)

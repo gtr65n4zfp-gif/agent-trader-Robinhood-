@@ -1,16 +1,14 @@
 """
-Council demo — the keystone proof for Milestone 3: Fundamentals +
-Technicals feed the Judge, the Judge decides, and only a buy/sell (never
-a hold) reaches PaperBroker, which runs the Risk vetoer before anything
-executes. Every outcome — trade, hold, or veto — is logged with reasoning.
-Zero real-money risk: nothing here can place a live order.
+Council demo — the keystone proof: the Technicals strategy signal feeds
+the Judge (behind the regime gate), the Judge decides, and only a buy/sell
+(never a hold) reaches PaperBroker, which runs the Risk vetoer before
+anything executes. Every outcome — trade, hold, or veto — is logged with
+reasoning. Zero real-money risk: nothing here can place a live order.
 
-Like every other data-touching module in this project (execution/robinhood.py,
-agents/fundamentals_seat.py), this script is agent-mediated: it has no MCP
+Like every other data-touching module in this project
+(execution/robinhood.py), this script is agent-mediated: it has no MCP
 connection of its own. It expects a bundle of already-fetched raw MCP
-responses, PLUS the Fundamentals verdict — which, per
-agents/fundamentals_seat.py's own design, is formed by the calling agent
-reading build_brief()'s output, not computed mechanically. Run it as:
+responses. Run it as:
 
     python -m agents.demo_council SYMBOL BUNDLE_JSON_PATH [QUANTITY]
 
@@ -18,7 +16,7 @@ BUNDLE_JSON_PATH must contain:
     "quote":                  get_equity_quotes response for [symbol]
     "atr", "rsi", "ema":      get_equity_technical_indicators responses
                                (type=atr/rsi/ema) for symbol — "ema" is the
-                               SHORT-period reading, for the Technicals seat
+                               SHORT-period reading, for the Technicals signal
     "regime_ema":              get_equity_technical_indicators response
                                (type=ema, period=config.REGIME_EMA_LOOKBACK_DAYS)
                                for symbol — a genuinely distinct, longer-
@@ -31,11 +29,8 @@ BUNDLE_JSON_PATH must contain:
     "robinhood_fundamentals": get_equity_fundamentals response for
                                [symbol] — used only to resolve sector for
                                the Risk vetoer's sector check, NOT fed
-                               into the Technicals seat (that would break
+                               into the Technicals signal (that would break
                                its price-only isolation)
-    "fundamentals_verdict":   agents.fundamentals_seat.form_verdict()
-                               output, formed by the calling agent from
-                               build_brief(symbol)
 
 Known limitation: sector_map here only covers the traded symbol, not
 every other held position — PaperBroker's sector check handles a missing
@@ -70,20 +65,18 @@ def run_demo(symbol: str, quantity: float, bundle: dict) -> dict:
     # can no longer be silently fed the same number and mechanically agree.
     technicals_view = technicals.build_view(symbol, price, ema=ema, rsi=rsi, atr_pct=atr_pct)
     regime_view = regime.regime_stance(symbol, price, ema=regime_ema, atr_pct=atr_pct)
-    fundamentals_verdict = bundle["fundamentals_verdict"]
 
-    decision = judge.decide(fundamentals_verdict, technicals_view, regime=regime_view, quantity=quantity)
-    # Baseline stays regime-blind on purpose — it's the "no seat isolation,
-    # no gate at all" comparison; adding the regime gate to it would
-    # defeat the point of measuring what the real Judge's gates add.
-    baseline = judge.baseline_decide(fundamentals_verdict, technicals_view, quantity=quantity)
+    decision = judge.decide(technicals_view, regime=regime_view, quantity=quantity)
+    # Baseline stays regime-blind and threshold-blind on purpose — it's the
+    # "no gate at all" comparison; adding the regime gate or confidence bar
+    # to it would defeat the point of measuring what the real Judge's gates
+    # add.
+    baseline = judge.baseline_decide(technicals_view, quantity=quantity)
 
     print(config.mode_banner())
     print(f"{symbol} @ ${price:,.2f}   ATR {atr_pct * 100:.2f}%   RSI {rsi:.1f}   "
           f"EMA(short) {ema:.2f}   EMA(regime, {config.REGIME_EMA_LOOKBACK_DAYS}d) {regime_ema:.2f}")
-    print(f"\nFundamentals: {fundamentals_verdict['stance']} "
-          f"({fundamentals_verdict['confidence']}) — {fundamentals_verdict['reasons']}")
-    print(f"Technicals:   {technicals_view['stance']} "
+    print(f"\nTechnicals:   {technicals_view['stance']} "
           f"({technicals_view['confidence']}) — {technicals_view['reasons']}")
     print(f"Regime:       {regime_view['state']} (tradeable={regime_view['tradeable']}) — {regime_view['reason']}")
     print(f"\nJudge decision: {decision}")

@@ -78,20 +78,17 @@ if [ -f "$PROJECT_DIR/.venv/bin/activate" ]; then
   source "$PROJECT_DIR/.venv/bin/activate"
 fi
 
-# config/.env is gitignored and optional (see research/sec_client.py's
-# docstring — there's no automatic .env loading anywhere in this project,
-# so this is the one place that convention gets honored for a local run).
+# config/.env is gitignored and optional — there's no automatic .env
+# loading anywhere in this project, so this is the one place that
+# convention gets honored for a local run. (The project no longer pulls
+# SEC data, so no SEC_USER_AGENT is needed; .env is sourced only in case a
+# future strategy wants its own config.)
 if [ -f "$PROJECT_DIR/config/.env" ]; then
   set -a
   # shellcheck disable=SC1091
   source "$PROJECT_DIR/config/.env"
   set +a
 fi
-# launchd's environment won't have picked up anything from your shell
-# profile — export SEC_USER_AGENT if it's already set (e.g. from
-# config/.env above), otherwise fall back to the known-good contact
-# rather than silently defaulting to SEC's generic, rate-limit-prone one.
-export SEC_USER_AGENT="${SEC_USER_AGENT:-Ethan knt6hptzgv@privaterelay.appleid.com}"
 
 echo "$TIMESTAMP RUN START" >> "$LOG_FILE"
 
@@ -126,18 +123,17 @@ STEPS:
 2. For every symbol in execution/config.py's WATCHLIST, call:
    - get_equity_quotes
    - get_equity_technical_indicators for ATR (period 14), RSI (period 14), and EMA — TWICE: once at the short period used elsewhere in this codebase (period 9), and once at period=config.REGIME_EMA_LOOKBACK_DAYS for the regime filter. These must be two genuinely separate calls with different periods — read execution/robinhood.py's get_regime_ema() docstring for why, and how much price history to request so the longer EMA is accurate.
-   - get_equity_fundamentals (sector, for the risk vetoer)
+   - get_equity_fundamentals (Robinhood's own — used only to resolve the symbol's sector for the risk vetoer, not a strategy input)
    Read agents/demo_council.py's module docstring for the exact expected shape of each raw response — match it exactly. If any symbol's data fails to fetch or looks malformed, that's fine — automation/run_pass.py's own per-symbol sanity check handles it; don't pre-filter or guess.
+   NOTE: there is no SEC/fundamentals step any more. The pipeline is pure rule-based market data (regime + Technicals strategy + Judge) — do NOT fetch SEC data or form any "fundamentals verdict"; that track was retired (see README's "History").
 
-3. For every symbol, form its Fundamentals verdict: call agents.fundamentals_seat.build_brief(ticker) via python3 (pure Python, pulls public SEC data directly, no MCP needed), read the resulting brief, and form your own genuine stance/confidence/reasons judgment grounded in what it actually shows — this must be your real judgment, not a mechanical score. Package it with agents.fundamentals_seat.form_verdict(ticker, stance, confidence, reasons).
+3. Assemble one bundle: {symbol: {"quote":..., "atr":..., "rsi":..., "ema":..., "regime_ema":..., "robinhood_fundamentals":...}} for every watchlist symbol — see automation/run_pass.py's BUNDLE_HELP constant for the exact required shape.
 
-4. Assemble one bundle: {symbol: {"quote":..., "atr":..., "rsi":..., "ema":..., "regime_ema":..., "robinhood_fundamentals":..., "fundamentals_verdict":...}} for every watchlist symbol — see automation/run_pass.py's BUNDLE_HELP constant for the exact required shape.
+4. Call automation.run_pass.run_pass(bundle) via python3 — no now or broker override; this is a real pass against the real shared paper account and trade log. It already runs assert_paper_mode() first, the market-hours guard, the per-symbol data sanity check, exit-sweep-before-entries, and routes through AUTOMATION_DRY_RUN.
 
-5. Call automation.run_pass.run_pass(bundle) via python3 — no now or broker override; this is a real pass against the real shared paper account and trade log. It already runs assert_paper_mode() first, the market-hours guard, the per-symbol data sanity check, exit-sweep-before-entries, and routes through AUTOMATION_DRY_RUN.
+5. Print the full run summary it returns.
 
-6. Print the full run summary it returns.
-
-7. Print "AUTOMATION_RUN_OK: <short summary — symbols evaluated/skipped, entries/exits/holds counts, current round-trip stats>" as your absolute final line.
+6. Print "AUTOMATION_RUN_OK: <short summary — symbols evaluated/skipped, entries/exits/holds counts, current round-trip stats>" as your absolute final line.
 
 If anything else fails unexpectedly at any step (an exception, a malformed response you can't work around, anything else not covered above), print "AUTOMATION_RUN_FAILED: <what failed and why>" and stop — don't guess, don't retry silently, don't partially proceed.
 PROMPT_EOF
