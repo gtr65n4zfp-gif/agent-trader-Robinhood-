@@ -63,23 +63,34 @@ in the live gate. Same bar the whole project runs on.
 Ranked by how cleanly each drops into the existing gate/backtest/paper-broker,
 easiest first.
 
-### 1. Time-series momentum (trend-following) — *first to build*
+### 1. Time-series momentum (trend-following) — *SCAFFOLDED*
 
+- **Status.** Built: the signal (`strategies/time_series_momentum.py`) and a
+  screening validation harness (`backtest/momentum_backtest.py`), both with
+  passing offline self-tests. **Not yet in the live gate** — it still has to
+  clear the promotion gate on real historical data first (no live-data access
+  in this environment; see README's network note). This is the scaffold, not
+  the verdict.
 - **Signal.** An instrument's own trailing 12-month return (skipping the most
-  recent month) predicts its next-period return: positive → long, negative →
-  short. Classic trend-following (Moskowitz, Ooi & Pedersen).
-- **Data.** Daily bars only — already available via `backtest/data.py`
-  (`bars_through` + a trailing-return series; `recent_return_series` exists,
-  just at a 5-day lookback — generalize the period). **No new data source.**
+  recent month — the "12-1" convention) predicts its next-period return:
+  positive → long, negative → short, small → stay out. Classic trend-following
+  (Moskowitz, Ooi & Pedersen). Self-normalized: the neutral band and confidence
+  scale to the symbol's own typical trend magnitude.
+- **Data.** Daily bars only — computed from `backtest/data.py`'s truncated
+  close series, lookahead-safe through the same `bars_through()` choke point.
+  **No new data source.**
 - **Why first.** Purely price-based, computes from data we already fetch, and
   the volatility-scaled sizing it wants is already in `execution/config.py`
   (`TARGET_DAILY_VOL_PCT`) and the regime filter. Lowest integration cost.
-- **Backtest plan.** Add a `strategies/time_series_momentum.py` that emits the
-  standard view; validate via a harness modeled on
-  `backtest/forecast_backtest.py` against the three windows in
-  `agents/BACKTEST_DESIGN.md`.
+- **Remaining work to promote.** Run `momentum_backtest.run_validation()` on
+  real fetched bars across the three windows in `agents/BACKTEST_DESIGN.md`;
+  if it clears the gate, wire the signal into `agents/judge.py` as the second
+  live strategy (making the gate conjunctive with Technicals) and run it
+  through the full `backtest/engine.py` + PaperBroker with modeled costs.
 - **Catch.** Crowded; bleeds in sharp V-shaped reversals. The regime filter is
   the intended mitigation — verify it actually helps in backtest, don't assume.
+  The screening harness uses overlapping windows (optimistic CI) — it's for
+  rejecting a no-edge signal, not final proof; the engine is the real test.
 
 ### 2. Cross-sectional momentum (relative strength)
 
