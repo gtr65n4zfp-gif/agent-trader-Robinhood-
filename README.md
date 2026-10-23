@@ -31,7 +31,8 @@ data. (See the git history and the "History" note below if you're looking for it
    individually backtestable signals. Each is domain-isolated to the market data
    it needs and emits a uniform `{stance, confidence, reasons}` view. Today's
    library: the rule-based **Technicals** signal (live) and a quant **forecast
-   model** (in backtest validation).
+   model** (in backtest validation). The build order for what comes next is in
+   `STRATEGY_LIBRARY.md`.
 3. **The gate** (`agents/`) — the regime filter, the Judge (the strategy
    arbiter), and the Risk vetoer decide whether a strategy's signal actually
    becomes a trade. No-trade is the default.
