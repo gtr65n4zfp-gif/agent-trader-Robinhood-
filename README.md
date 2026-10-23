@@ -64,6 +64,14 @@ data. (See the git history and the "History" note below if you're looking for it
             drawdowns, about half the return, and no timing edge, so it
             narrowly fails the gate everywhere (`strategies/time_series_momentum.py`,
             `agents/MOMENTUM_RESULTS.md`)
+      - [x] Market risk-off switch ("safety switch") — steps the whole book
+            into cash when SPY's 12-month trend turns down. Tested on real
+            data with pre-registered rules. Over 24 years of SPY it **passes**:
+            max drawdown fell from −52% to −21% and Sharpe rose from 0.50 to
+            0.64, mostly by sitting out 2008. On the recent 9 years alone it
+            fails (it caught 2022 too late). Promising but not yet armed; that
+            is an owner decision (`backtest/risk_switch_backtest.py`,
+            `agents/RISK_SWITCH_RESULTS.md`)
       - [x] Forecast strategy (quant) — plain OLS return model over
             momentum/mean-reversion/volatility features, in backtest
             validation, not yet in the live gate (`strategies/forecast_model.py`,

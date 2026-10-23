@@ -182,6 +182,31 @@ easiest first.
 
 ---
 
+## Overlays (gates, not strategies)
+
+An overlay doesn't pick trades. It decides when the whole book should
+step aside, which makes it a candidate extension of `agents/regime.py`.
+That module can only tighten: it blocks new buys and can trigger exits.
+
+### Market risk-off switch ("safety switch") — *TESTED: promising, awaiting owner decision*
+
+- **Rule:** once a month, step the whole portfolio into cash when SPY's own
+  12-1 momentum is clearly down. Everything was pre-registered: the signal,
+  two variants, and the pass criteria.
+- **Status:** full write-up in `agents/RISK_SWITCH_RESULTS.md`.
+  - **Over 24 years of SPY (2002–2026), it PASSES.** Max drawdown fell from
+    −52% to −21%, and Sharpe rose from 0.50 to 0.64. That holds with
+    dividends included.
+  - **The pass comes from the slow bear markets.** It sat out March 2008 to
+    September 2009 (−13.7% vs −43.5% in the crisis window) and the tail of
+    the dot-com bust.
+  - **Over the last 9 years alone, the primary version fails everywhere.**
+    It caught 2022 too late, and that window has no 2008-style crash.
+  - **The evidence rests on about two events,** so arming it is the owner's
+    call.
+- **Code:** `backtest/risk_switch_backtest.py`, which reuses the momentum
+  signal unchanged.
+
 ## Already in flight (not on this list)
 
 - **Forecast model** (`strategies/forecast_model.py`, `agents/forecast_seat.py`)

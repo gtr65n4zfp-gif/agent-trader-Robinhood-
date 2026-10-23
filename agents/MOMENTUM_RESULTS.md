@@ -185,6 +185,10 @@ just holding.
 
 - **Leave momentum out of the live gate.** Keep the code: it's tested and
   reusable.
+- **Done:** this hypothesis has since been tested; see
+  `agents/RISK_SWITCH_RESULTS.md`. It's the most promising result so far:
+  it passes over 24 years of SPY on the strength of 2008, but fails on the
+  recent 9 years. The original note follows.
 - **A specific hypothesis worth testing later is a market risk-off overlay.**
   The idea: keep the normal strategy, but go to cash when a *broad* trend
   signal (SPY's, or a multi-asset basket's) turns negative. The goal would

@@ -50,4 +50,14 @@ MULTIASSET = [
     "XLE", "XLF", "XLK", "XLU", "XLV", "XLP", "XLY", "XLI", "XLB",   # US sectors
 ]
 
-UNIVERSES = {"watchlist": WATCHLIST, "top30_2015": TOP30_2015, "multiasset": MULTIASSET}
+# The US market itself, for long-history tests. Robinhood's real SPY data
+# starts Sep 1999 (earlier months come back as interpolated gap-fill), so
+# this is the one basket that reaches back through the 2008 financial
+# crisis. Used by backtest/risk_switch_backtest.py. The nine sector SPDRs
+# can't be used for long-history tests: their Robinhood history has a fake
+# ~-50% month in Apr 2002 (XLK $21.67 -> $9.53 while SPY fell ~6%), a data
+# discontinuity rather than a real move. See agents/RISK_SWITCH_RESULTS.md.
+SPY_ONLY = ["SPY"]
+
+UNIVERSES = {"watchlist": WATCHLIST, "top30_2015": TOP30_2015, "multiasset": MULTIASSET,
+             "spy_only": SPY_ONLY}

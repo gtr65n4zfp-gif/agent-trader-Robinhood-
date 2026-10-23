@@ -64,6 +64,9 @@ LOOKBACK, SKIP, HORIZON, PERIODS_PER_YEAR = 12, 1, 1, 12
 # question this answers -- "does paying fair interest on idle cash flip the
 # verdict?" -- not for a precise figure.
 TBILL_ANNUAL = {
+    1999: 0.0464, 2000: 0.0582, 2001: 0.0339, 2002: 0.0160, 2003: 0.0101, 2004: 0.0137,
+    2005: 0.0315, 2006: 0.0473, 2007: 0.0435, 2008: 0.0137, 2009: 0.0015, 2010: 0.0014,
+    2011: 0.0005, 2012: 0.0009, 2013: 0.0006, 2014: 0.0003,
     2015: 0.0005, 2016: 0.0032, 2017: 0.0093, 2018: 0.0194, 2019: 0.0206, 2020: 0.0037,
     2021: 0.0004, 2022: 0.0202, 2023: 0.0507, 2024: 0.0497, 2025: 0.042, 2026: 0.037,
 }
@@ -97,6 +100,30 @@ def clean_bars(symbol: str, raw: dict) -> tuple[list[dict], str | None]:
     return bars, None
 
 
+def load_raw(raw_paths: list[str]) -> dict[str, dict]:
+    """Read saved get_equity_historicals responses: {symbol: the raw response
+    that contains it}. A symbol appearing in several files keeps the last."""
+    raw_by_symbol: dict[str, dict] = {}
+    for path in raw_paths:
+        with open(path) as f:
+            raw = json.load(f)
+        for r in raw["data"]["results"]:
+            raw_by_symbol[r["symbol"]] = raw
+    return raw_by_symbol
+
+
+def select_universe(label: str, raw_by_symbol: dict[str, dict]) -> tuple[dict[str, dict], dict[str, str]]:
+    """If `label` names a universe in backtest/universes.py, keep exactly its
+    symbols and report any listed symbol missing from the raw data (never a
+    silent drop). An unknown label keeps everything that was loaded."""
+    universe = UNIVERSES.get(label)
+    if universe is None:
+        return raw_by_symbol, {}
+    missing = {sym: "listed in backtest/universes.py but missing from the raw data files"
+               for sym in universe if sym not in raw_by_symbol}
+    return {sym: raw_by_symbol[sym] for sym in universe if sym in raw_by_symbol}, missing
+
+
 def _fmt(x, pct=True):
     if x is None:
         return "  n/a"
@@ -105,24 +132,12 @@ def _fmt(x, pct=True):
 
 def main(label: str, raw_paths: list[str], cash_tbill: bool = False) -> dict:
     cash = TBILL_ANNUAL if cash_tbill else None
-    universe = UNIVERSES.get(label)
+    raw_by_symbol, excluded = select_universe(label, load_raw(raw_paths))
     if cash_tbill:
         label = f"{label}_tbill"
-    raw_by_symbol: dict[str, dict] = {}
-    for path in raw_paths:
-        with open(path) as f:
-            raw = json.load(f)
-        for r in raw["data"]["results"]:
-            raw_by_symbol[r["symbol"]] = raw
 
     full: list[dict] = []
-    excluded: dict[str, str] = {}
     bars_by_symbol: dict[str, list[dict]] = {}
-    if universe is not None:
-        for sym in universe:
-            if sym not in raw_by_symbol:
-                excluded[sym] = "listed in backtest/universes.py but missing from the raw data files"
-        raw_by_symbol = {sym: raw_by_symbol[sym] for sym in universe if sym in raw_by_symbol}
     for sym, raw in raw_by_symbol.items():
         bars, note = clean_bars(sym, raw)
         res = mb.run_validation(bars, symbol=sym, horizon=HORIZON, lookback=LOOKBACK, skip=SKIP,
