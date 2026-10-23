@@ -69,9 +69,10 @@ data. (See the git history and the "History" note below if you're looking for it
             data with pre-registered rules. Over 24 years of SPY it **passes**:
             max drawdown fell from −52% to −21% and Sharpe rose from 0.50 to
             0.64, mostly by sitting out 2008. On the recent 9 years alone it
-            fails (it caught 2022 too late). Promising but not yet armed; that
-            is an owner decision (`backtest/risk_switch_backtest.py`,
-            `agents/RISK_SWITCH_RESULTS.md`)
+            fails (it caught 2022 too late). **Armed** in paper/dry-run at the
+            owner's request. When SPY's trend is clearly down, it blocks new
+            buys and exits holdings; when market data is missing, it blocks
+            buys only (`agents/market_switch.py`, `agents/RISK_SWITCH_RESULTS.md`)
       - [x] Forecast strategy (quant) — plain OLS return model over
             momentum/mean-reversion/volatility features, in backtest
             validation, not yet in the live gate (`strategies/forecast_model.py`,
@@ -196,6 +197,29 @@ is understood.
   the earlier cloud-routine Robinhood-unavailable failure same-day instead
   of silently. Pairs naturally with the automation observability work
   already in `automation/run_scheduled.sh`.
+
+## Realistic expectations (agreed with the owner)
+
+The goal is **consistency over big wins**. Here's what that realistically
+means, from this project's own 24-year SPY backtest (2002–2026, safety
+switch on, approximate dividends and T-bill cash included; backtests flatter,
+and real future returns may be lower):
+
+- **About 10–11% a year on average.** That's roughly the market itself, not
+  more. The switch's job is smaller crashes, not higher returns.
+- **About 71% of months made money**, against 65% for plain holding. Even so,
+  about 3 months in 10 still lose money.
+- **About 1 in 7 rolling 12-month periods ended in a loss.** The worst
+  12-month period was −19% with the switch, against −44% for plain holding.
+- **$500 a month is $6,000 a year.** Averaging that at ~10% a year takes
+  about $55,000–60,000 invested. Taking it out *every month* without being
+  forced to sell in bad stretches realistically takes $100,000–150,000.
+- **On the $10,000 paper account,** expect roughly $90 a month on average,
+  with some months negative.
+- **Nothing here is a steady paycheck.** Strategies marketed as "consistent
+  monthly income" (for example, selling options) usually hide occasional
+  large losses. Truly steady income means T-bills (about 3.7%, roughly
+  $160,000 for $500 a month).
 
 ## Go-live gate (Milestone 5)
 

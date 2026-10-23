@@ -199,6 +199,32 @@ MAX_QUOTE_AGE_MINUTES: float = 30.0
 # Never the default; never flipped as a side effect of something else.
 AUTOMATION_DRY_RUN: bool = True
 
+# --- Market risk-off switch ("safety switch", agents/market_switch.py) ------
+# A market-wide extension of the regime filter, and like it, it can only
+# TIGHTEN. When SPY's own 12-1 momentum (monthly bars, completed months
+# only) is clearly bearish, new buys are blocked for every symbol and held
+# positions exit via the "market_risk_off" path. It never forces a buy.
+# Evidence and caveats: agents/RISK_SWITCH_RESULTS.md. It passed over 24
+# years of SPY on the strength of the slow 2002 and 2008 bear markets,
+# failed the recent 9 years in this primary form, and can't help in fast
+# crashes. Armed at the owner's request after reading those results.
+#
+# Fail-safe: missing/stale/unparseable market data -> state "unknown". That
+# blocks new buys (we can't confirm the market is safe), but it does NOT
+# force-exit holdings: a data glitch must never trigger a fire sale. Same
+# "when in doubt, do less" rule as the rest of automation.
+MARKET_SWITCH_ENABLED: bool = True
+MARKET_SWITCH_SYMBOL: str = "SPY"
+# "bearish_only" is the pre-registered PRIMARY variant (step aside only on a
+# clearly DOWN trend). "not_bullish" is the stricter sensitivity variant.
+# Change it only deliberately, with the results doc in hand.
+MARKET_SWITCH_VARIANT: str = "bearish_only"
+# How far back the routine must fetch monthly bars. The 12-1 signal needs
+# 12 months of lookback plus 20 more to estimate a typical move (32
+# completed months minimum -- agents.market_switch.MIN_COMPLETED_MONTHS),
+# so 48 leaves margin.
+MARKET_SWITCH_MONTHS_TO_FETCH: int = 48
+
 # --- Options backtest (backtest/options_engine.py) --------------------------
 # See agents/OPTIONS_BACKTEST_DESIGN.md. Separate from STOP_LOSS_PCT/
 # TAKE_PROFIT_PCT above: options move far more than the underlying share

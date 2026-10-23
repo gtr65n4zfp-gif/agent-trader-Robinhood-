@@ -56,28 +56,40 @@ itself):
    the seats. This is also the practical fallback for market holidays:
    the hours guard alone can't detect them, but a holiday's "latest"
    quote is from the prior session and fails the staleness check.
-4. **Exit sweep first.** Every OPEN position with fresh data this pass is
-   checked against all four exit paths (`agents/exits.py`) before
+4. **Market risk-off switch** (`agents/market_switch.py`, armed via
+   `config.MARKET_SWITCH_ENABLED`). It's read once per pass from SPY's
+   *completed* monthly bars and logged as `action="market_switch"`. It can
+   only tighten:
+   - **RISK-OFF** (SPY's 12-1 trend clearly down) blocks every new buy
+     (`market_sitout`) and exits holdings via the `market_risk_off` path.
+   - **UNKNOWN** (market data missing, stale, or gappy) blocks new buys but
+     never forces an exit.
+   Evidence: `agents/RISK_SWITCH_RESULTS.md`.
+5. **Exit sweep first.** Every OPEN position with fresh data this pass is
+   checked against all five exit paths (`agents/exits.py`) before
    anything new opens — manage what we hold before adding to it. A held
    symbol with no fresh data this pass (outside the watchlist, or it
    failed the sanity check) is left alone, not force-closed.
-5. **Then entries.** For every watchlist symbol not already held: regime
-   -> strategy signal (Technicals) -> Judge, no-trade-by-default. The
+6. **Then entries.** For every watchlist symbol not already held: market
+   switch -> regime -> strategy signal (Technicals) -> Judge,
+   no-trade-by-default. The
    no-gate baseline (raw signal, no regime filter, no confidence
    threshold) is logged unconditionally either way (the ablation hook),
    same as every manual run.
-6. **Route or log, per `config.AUTOMATION_DRY_RUN`.** True (the shipped
+7. **Route or log, per `config.AUTOMATION_DRY_RUN`.** True (the shipped
    default): every entry/exit decision is fully evaluated and logged
    (`action="dry_run_entry"`/`"dry_run_exit"`) but `PaperBroker.buy()`/
    `.sell()` is never called — nothing executes. False: real paper
    orders execute, still through the full Risk vetoer gate — automation
    adds no path around any existing breaker.
-7. **Regime tagging.** Every logged decision — trade, hold, sit-out, or
-   skip — carries `regime_state` at decision time, so the go-live gate's
+8. **Regime and market tagging.** Every logged decision — trade, hold,
+   sit-out, or skip — carries `regime_state` (and `market_state`) at
+   decision time, so the go-live gate's
    >=3-regime-coverage requirement is verifiable directly from
    `trade_log` later, not reconstructed after the fact.
-8. **Run summary.** What the pass saw (symbols evaluated / skipped), what
-   it did or would have done (entries, exits, holds, sit-outs), and
+9. **Run summary.** What the pass saw (symbols evaluated / skipped, the
+   market switch's state), what it did or would have done (entries, exits,
+   holds, regime and market sit-outs), and
    current `trade_log.round_trip_stats()`.
 
 ## Known limitation carried into automation
@@ -97,6 +109,23 @@ to cover them — before execution is ever armed for real.
 
 ## The routine
 
+> **Source of truth for the cloud routine's prompt:**
+> `automation/cloud_routine_prompt.md`. The scheduled cloud routine ("Agent
+> Trader — Daily Council Pass") keeps its prompt inside the scheduled task
+> itself, not in this repo. When it was checked on 2026-10-23, it was still
+> the pre-reshape SEC/fundamentals prompt, ran against `main`, and was
+> scheduled for weekdays at **17:30 UTC** (not the 15:00 UTC described
+> below).
+>
+> **Update order matters.** The new prompt calls
+> `run_pass(bundle, market_bundle=...)`, which only exists once this code
+> is on `main`. So: (1) merge to `main`, then (2) replace the routine's
+> prompt with that file's contents. Doing (2) first breaks the routine
+> against old code. Doing only (1) breaks it the other way: the old prompt
+> imports the deleted `agents.fundamentals_seat`, and never fetches market
+> data, so the switch blocks every buy.
+
+
 Defined via the `schedule` skill: a scheduled Claude Code routine
 ("Agent Trader — Daily Council Pass," weekdays at 15:00 UTC — mid-
 morning ET year-round, chosen to stay inside regular hours across the
@@ -114,8 +143,12 @@ DST shift) whose prompt, on each wake, tells the agent to:
    `get_equity_fundamentals` (Robinhood's own — used only to resolve the
    symbol's sector for the Risk vetoer, not a strategy input). No SEC
    data is fetched any more; the whole pipeline is rule-based market data.
+   Once per pass, also fetch SPY's monthly bars (`get_equity_historicals`,
+   interval=month, `config.MARKET_SWITCH_MONTHS_TO_FETCH` months back) for
+   the market switch. If that fetch fails, pass `None`; never fabricate
+   it.
 3. Assemble the bundle in the shape `automation/run_pass.py` expects.
-4. Call `run_pass(bundle)`.
+4. Call `run_pass(bundle, market_bundle=...)`.
 5. Report the run summary.
 
 Still DRY-RUN. Arming execution is a one-line, deliberate edit to

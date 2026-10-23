@@ -12,7 +12,10 @@ PRE-REGISTERED, fixed before any result was seen (so the rules can't be
 tuned to the answer):
 - Market signal: SPY's own 12-1 time-series momentum, the exact signal in
   strategies/time_series_momentum.py on monthly bars (12-bar lookback,
-  skip 1), read from SPY's history up to that month only.
+  skip 1), read from SPY's history up to that month only. Since the switch
+  was armed, the signal and variant logic live in agents/market_switch.py,
+  and this backtest imports them from there, so the tested rule is the live
+  rule.
 - Two variants, no more:
     bearish_only (PRIMARY): step aside only when SPY's trend is clearly DOWN.
     not_bullish  (stricter sensitivity check): step aside whenever SPY's
@@ -46,8 +49,8 @@ import json
 import os
 import sys
 
+from agents.market_switch import VARIANTS, is_risk_on, market_view
 from execution import config
-from strategies import time_series_momentum as tsm
 
 from . import data as backtest_data
 from . import momentum_backtest as mb
@@ -64,33 +67,21 @@ LONG_HISTORY_WINDOWS = [
     ("2009-16 bull",                  "2009-04-01", "2016-12-31"),
 ]
 
-VARIANTS = {
-    "bearish_only": "step aside only when SPY's 12-1 trend is clearly DOWN (primary)",
-    "not_bullish": "step aside whenever SPY's 12-1 trend is not clearly UP (stricter sensitivity check)",
-}
+def market_stances(spy_bars: list[dict]) -> dict[str, str]:
+    """{date: the market's momentum stance as of that month's close}, each
+    computed from SPY's history up to and including that date only
+    (bars_through() is the no-lookahead choke point). Dates without enough
+    history are absent.
 
-
-def market_stances(spy_bars: list[dict], lookback: int = rmb.LOOKBACK, skip: int = rmb.SKIP) -> dict[str, str]:
-    """{date: SPY's momentum stance as of that month's close}, each computed
-    from SPY's history up to and including that date only (bars_through() is
-    the no-lookahead choke point). Dates without enough history are absent."""
+    The stance comes from agents.market_switch.market_view(), the SAME code
+    the live switch runs, so this backtest can't drift from what's armed."""
     out: dict[str, str] = {}
     for b in spy_bars:
         hist = [x["close"] for x in backtest_data.bars_through(spy_bars, b["date"])]
-        momentum = tsm.trailing_return(hist, lookback, skip)
-        typical = tsm.typical_abs_return(hist, lookback, skip)
-        if momentum is None or typical is None:
-            continue
-        out[b["date"]] = tsm.build_view("SPY", momentum, typical)["stance"]
+        view = market_view(hist, "SPY")
+        if view is not None:
+            out[b["date"]] = view["stance"]
     return out
-
-
-def is_risk_on(stance: str, variant: str) -> bool:
-    if variant == "bearish_only":
-        return stance != "bearish"
-    if variant == "not_bullish":
-        return stance == "bullish"
-    raise ValueError(f"unknown variant {variant!r}; expected one of {sorted(VARIANTS)}")
 
 
 def run_overlay(bars_by_symbol: dict[str, list[dict]], stances: dict[str, str], variant: str,

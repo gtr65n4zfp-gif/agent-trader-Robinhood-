@@ -188,7 +188,7 @@ An overlay doesn't pick trades. It decides when the whole book should
 step aside, which makes it a candidate extension of `agents/regime.py`.
 That module can only tighten: it blocks new buys and can trigger exits.
 
-### Market risk-off switch ("safety switch") — *TESTED: promising, awaiting owner decision*
+### Market risk-off switch ("safety switch") — *ARMED in paper/dry-run (primary variant)*
 
 - **Rule:** once a month, step the whole portfolio into cash when SPY's own
   12-1 momentum is clearly down. Everything was pre-registered: the signal,
@@ -202,8 +202,12 @@ That module can only tighten: it blocks new buys and can trigger exits.
     the dot-com bust.
   - **Over the last 9 years alone, the primary version fails everywhere.**
     It caught 2022 too late, and that window has no 2008-style crash.
-  - **The evidence rests on about two events,** so arming it is the owner's
-    call.
+  - **The evidence rests on about two events.** The owner chose to arm it
+    anyway.
+- **Armed:** `agents/market_switch.py` (`config.MARKET_SWITCH_ENABLED`,
+  variant `bearish_only`). When RISK-OFF it blocks buys and exits holdings.
+  When the data is unknown it blocks buys only. It's still paper and
+  dry-run.
 - **Code:** `backtest/risk_switch_backtest.py`, which reuses the momentum
   signal unchanged.
 

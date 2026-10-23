@@ -26,7 +26,7 @@
 # agent it invokes is explicitly instructed never to edit that file either.
 #
 # The sub-agent's --allowedTools below is deliberately scoped to
-# Bash(python3 *) — not bare Bash — plus the four specific read-only
+# Bash(python3 *) — not bare Bash — plus the five specific read-only
 # Robinhood MCP tools it actually needs. This runs unattended, daily, with
 # no human approving individual commands, so "the agent only needed to run
 # python3 one-liners" gets enforced structurally rather than trusted to
@@ -125,11 +125,12 @@ STEPS:
    - get_equity_technical_indicators for ATR (period 14), RSI (period 14), and EMA — TWICE: once at the short period used elsewhere in this codebase (period 9), and once at period=config.REGIME_EMA_LOOKBACK_DAYS for the regime filter. These must be two genuinely separate calls with different periods — read execution/robinhood.py's get_regime_ema() docstring for why, and how much price history to request so the longer EMA is accurate.
    - get_equity_fundamentals (Robinhood's own — used only to resolve the symbol's sector for the risk vetoer, not a strategy input)
    Read agents/demo_council.py's module docstring for the exact expected shape of each raw response — match it exactly. If any symbol's data fails to fetch or looks malformed, that's fine — automation/run_pass.py's own per-symbol sanity check handles it; don't pre-filter or guess.
+   ALSO, once per pass (not per symbol), for the market risk-off switch: call get_equity_historicals with symbols=[config.MARKET_SWITCH_SYMBOL] (SPY), interval="month", leave adjustment_type at its default ('split'), and start_time = the first day of the month config.MARKET_SWITCH_MONTHS_TO_FETCH (48) months before today, at 00:00 UTC. Keep the raw response exactly as returned. If it errors or comes back empty, pass None for it in step 4 -- do NOT build or estimate it. The switch then reads "unknown", which safely blocks new buys and forces no exits.
    NOTE: there is no SEC/fundamentals step any more. The pipeline is pure rule-based market data (regime + Technicals strategy + Judge) — do NOT fetch SEC data or form any "fundamentals verdict"; that track was retired (see README's "History").
 
 3. Assemble one bundle: {symbol: {"quote":..., "atr":..., "rsi":..., "ema":..., "regime_ema":..., "robinhood_fundamentals":...}} for every watchlist symbol — see automation/run_pass.py's BUNDLE_HELP constant for the exact required shape.
 
-4. Call automation.run_pass.run_pass(bundle) via python3 — no now or broker override; this is a real pass against the real shared paper account and trade log. It already runs assert_paper_mode() first, the market-hours guard, the per-symbol data sanity check, exit-sweep-before-entries, and routes through AUTOMATION_DRY_RUN.
+4. Call automation.run_pass.run_pass(bundle, market_bundle=<the raw SPY monthly response from step 2, or None>) via python3 — no now or broker override; this is a real pass against the real shared paper account and trade log. It already runs assert_paper_mode() first, the market-hours guard, the per-symbol data sanity check, exit-sweep-before-entries, and routes through AUTOMATION_DRY_RUN.
 
 5. Print the full run summary it returns.
 
@@ -145,7 +146,7 @@ rm -f "$PROMPT_FILE"
 # call) has been covered by the background `caffeinate -i -w $$` since
 # the very first line.
 OUTPUT=$(claude -p "$PROMPT" \
-  --allowedTools "Bash(python3 *) mcp__robinhood-trading__get_equity_quotes mcp__robinhood-trading__get_equity_technical_indicators mcp__robinhood-trading__get_equity_fundamentals mcp__robinhood-trading__get_accounts" \
+  --allowedTools "Bash(python3 *) mcp__robinhood-trading__get_equity_quotes mcp__robinhood-trading__get_equity_technical_indicators mcp__robinhood-trading__get_equity_fundamentals mcp__robinhood-trading__get_equity_historicals mcp__robinhood-trading__get_accounts" \
   --output-format text 2>&1)
 EXIT_CODE=$?
 

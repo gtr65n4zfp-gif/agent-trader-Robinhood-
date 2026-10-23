@@ -45,7 +45,15 @@ not the same inputs relabeled.
 
 ## The gate
 
-- **Regime filter** — see below. Checked first; can only tighten.
+- **Market risk-off switch** (`agents/market_switch.py`, armed). It's a
+  market-wide extension of the regime filter, checked before everything
+  else, and it can only tighten.
+  - **RISK-OFF** (SPY's 12-1 trend clearly down): it forces HOLD on every
+    symbol and exits holdings via the `market_risk_off` path.
+  - **UNKNOWN** (unusable market data): it blocks new buys but forces no
+    exits.
+  - Evidence and caveats: `agents/RISK_SWITCH_RESULTS.md`.
+- **Regime filter** — see below. Checked next, per symbol; can only tighten.
 - **Judge** (`agents/judge.py`) — the arbiter. It sees the strategy
   signal's output (not its raw inputs) plus the regime read, and weighs them
   into a single decision (buy / sell / hold) with a confidence score. Every
@@ -100,6 +108,9 @@ open too long:
 
 - **Stop-loss** — hard, mechanical, not overridable by the judge.
 - **Take-profit** — target hit, gains locked in.
+- **Market risk-off** — the market switch reads definitively RISK-OFF.
+  Checked right after the price-based paths. An "unknown" market never
+  fires it.
 - **Regime change** — the regime filter flips against the open position.
 - **Conviction drop** — a later re-decision on the strategy signal re-evaluates
   and no longer supports holding (not a confident buy any more), even with no

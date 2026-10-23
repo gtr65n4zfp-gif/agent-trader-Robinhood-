@@ -54,7 +54,7 @@ NEUTRAL_BAND_FRAC = 0.25
 # a neutral, zero-confidence view rather than guessing -- the same
 # "never fake a stance" discipline as agents/forecast_seat.py's missing-data
 # path.
-_MIN_READINGS_FOR_TYPICAL = 20
+MIN_READINGS_FOR_TYPICAL = 20
 
 
 def trailing_return(closes: list[float], lookback_days: int = LOOKBACK_DAYS,
@@ -98,7 +98,7 @@ def typical_abs_return(closes: list[float], lookback_days: int, skip_days: int) 
         end = closes[i - skip_days]
         if start > 0:
             readings.append(abs((end - start) / start))
-    if len(readings) < _MIN_READINGS_FOR_TYPICAL:
+    if len(readings) < MIN_READINGS_FOR_TYPICAL:
         return None
     return median(readings)
 

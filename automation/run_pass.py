@@ -30,11 +30,17 @@ rationale:
   5. When execution IS armed, every order still routes through
      PaperBroker, which still runs the Risk vetoer — automation adds no
      path around it.
+  6. Market risk-off switch (agents/market_switch.py, when
+     config.MARKET_SWITCH_ENABLED). It's read once per pass from SPY's
+     completed monthly bars and can only tighten. RISK-OFF blocks every new
+     buy (logged "market_sitout") and exits holdings via "market_risk_off".
+     UNKNOWN (market data missing/stale/unusable) blocks new buys but never
+     forces exits.
 """
 
 from datetime import datetime, timezone
 
-from agents import exits, judge, regime, technicals
+from agents import exits, judge, market_switch, regime, technicals
 from execution import config, robinhood, trade_log
 from execution.paper_broker import PaperBroker, TradeError
 from execution.robinhood import RobinhoodDataError
@@ -89,7 +95,8 @@ def _extract_symbol_data(symbol: str, sym_bundle: dict, now: datetime) -> dict |
     }
 
 
-def run_pass(bundle: dict[str, dict], now: datetime | None = None, broker: PaperBroker | None = None) -> dict:
+def run_pass(bundle: dict[str, dict], now: datetime | None = None, broker: PaperBroker | None = None,
+             market_bundle: dict | None = None) -> dict:
     """
     Execute one full automation pass. See the module docstring for the
     fail-safe rules and BUNDLE_HELP for the bundle's shape.
@@ -99,9 +106,15 @@ def run_pass(bundle: dict[str, dict], now: datetime | None = None, broker: Paper
     PaperBroker.__init__'s docstring — same reasoning as
     agents/demo_exits.py and agents/demo_regime.py). The real scheduled
     routine omits this and gets the one shared paper account.
+    market_bundle: the raw get_equity_historicals response for
+    config.MARKET_SWITCH_SYMBOL, interval="month", reaching back
+    config.MARKET_SWITCH_MONTHS_TO_FETCH months -- the market switch's
+    input. Omitting it while the switch is enabled leaves the market
+    "unknown", which blocks all new buys (fail-safe), so the routine must
+    fetch it.
 
-    Returns a run summary: {started_at, dry_run, market_open,
-    symbols_skipped, exits, entries, holds, regime_sitouts,
+    Returns a run summary: {started_at, dry_run, market_open, market,
+    symbols_skipped, exits, entries, holds, regime_sitouts, market_sitouts,
     round_trip_stats}.
     """
     now = now or datetime.now(timezone.utc)
@@ -114,6 +127,8 @@ def run_pass(bundle: dict[str, dict], now: datetime | None = None, broker: Paper
         "entries": [],
         "holds": [],
         "regime_sitouts": [],
+        "market_sitouts": [],
+        "market": None,
     }
 
     # Rule 1 — hard stop, first line, no exceptions.
@@ -132,6 +147,18 @@ def run_pass(bundle: dict[str, dict], now: datetime | None = None, broker: Paper
     summary["market_open"] = True
 
     broker = broker or PaperBroker()
+
+    # Rule 6 — the market switch, read once per pass (it's market-wide) and
+    # logged on its own, so the audit trail shows the state every pass ran
+    # under. A non-fill record: it never touches round_trip_stats().
+    market = market_switch.evaluate(market_bundle, now=now) if config.MARKET_SWITCH_ENABLED else None
+    market_state = market["state"] if market else "disabled"
+    summary["market"] = market_state
+    if market is not None:
+        trade_log.record(
+            "market_switch", market["symbol"], 0, None, paper=True, reason=market["reason"],
+            extra={"state": market["state"], "variant": market["variant"], "stance": market["stance"]},
+        )
 
     # Rule 3 — per-symbol data sanity check, before anything touches the
     # seats or the broker.
@@ -171,18 +198,19 @@ def run_pass(bundle: dict[str, dict], now: datetime | None = None, broker: Paper
         v = views[symbol]
         signal = exits.evaluate_exits(
             entry_price, parsed[symbol]["price"],
-            technicals=v["technicals"], regime=v["regime"],
+            technicals=v["technicals"], regime=v["regime"], market=market,
         )
         if signal is None:
             continue
 
         record = {"symbol": symbol, "path": signal["path"], "reason": signal["reason"],
-                  "regime_state": v["regime"]["state"]}
+                  "regime_state": v["regime"]["state"], "market_state": market_state}
         if config.AUTOMATION_DRY_RUN:
             trade_log.record(
                 "dry_run_exit", symbol, shares, parsed[symbol]["price"], paper=True,
                 reason=f"[DRY RUN] would exit: {signal['path']} — {signal['reason']}",
-                extra={"path": signal["path"], "regime_state": v["regime"]["state"]},
+                extra={"path": signal["path"], "regime_state": v["regime"]["state"],
+                       "market_state": market_state},
             )
             record["executed"] = False
         else:
@@ -194,7 +222,8 @@ def run_pass(bundle: dict[str, dict], now: datetime | None = None, broker: Paper
             trade_log.record(
                 "exit", symbol, shares, parsed[symbol]["price"], paper=True,
                 reason=signal["reason"],
-                extra={"path": signal["path"], "realized_pnl": realized_pnl, "regime_state": v["regime"]["state"]},
+                extra={"path": signal["path"], "realized_pnl": realized_pnl, "regime_state": v["regime"]["state"],
+                       "market_state": market_state},
             )
             record["executed"] = True
             record["realized_pnl"] = realized_pnl
@@ -205,7 +234,7 @@ def run_pass(bundle: dict[str, dict], now: datetime | None = None, broker: Paper
         if symbol in broker.positions:
             continue  # already held — the exit sweep above owns it this pass
         v = views[symbol]
-        decision = judge.decide(v["technicals"], regime=v["regime"])
+        decision = judge.decide(v["technicals"], regime=v["regime"], market=market)
         # Baseline stays regime-blind and threshold-blind on purpose (see
         # agents/judge.py) — logged unconditionally, same as every manual
         # run's ablation hook.
@@ -218,21 +247,31 @@ def run_pass(bundle: dict[str, dict], now: datetime | None = None, broker: Paper
         )
 
         if decision["action"] == "hold":
-            is_regime_sitout = not v["regime"]["tradeable"]
+            # Attribute the hold to the gate that caused it, in the Judge's
+            # own order: market switch first, then regime, else the signal.
+            if market is not None and not market["tradeable"]:
+                action, bucket = "market_sitout", summary["market_sitouts"]
+            elif not v["regime"]["tradeable"]:
+                action, bucket = "regime_sitout", summary["regime_sitouts"]
+            else:
+                action, bucket = "hold", summary["holds"]
             trade_log.record(
-                "regime_sitout" if is_regime_sitout else "hold", symbol, 0, data["price"], paper=True,
+                action, symbol, 0, data["price"], paper=True,
                 reason=decision["rationale"],
-                extra={"seat": "judge", "confidence": decision["confidence"], "regime_state": v["regime"]["state"]},
+                extra={"seat": "judge", "confidence": decision["confidence"], "regime_state": v["regime"]["state"],
+                       "market_state": market_state},
             )
-            (summary["regime_sitouts"] if is_regime_sitout else summary["holds"]).append(symbol)
+            bucket.append(symbol)
             continue
 
-        record = {"symbol": symbol, "action": decision["action"], "regime_state": v["regime"]["state"]}
+        record = {"symbol": symbol, "action": decision["action"], "regime_state": v["regime"]["state"],
+                  "market_state": market_state}
         if config.AUTOMATION_DRY_RUN:
             trade_log.record(
                 "dry_run_entry", symbol, decision["target_quantity"], data["price"], paper=True,
                 reason=f"[DRY RUN] would {decision['action']}: {decision['rationale']}",
-                extra={"seat": "judge", "confidence": decision["confidence"], "regime_state": v["regime"]["state"]},
+                extra={"seat": "judge", "confidence": decision["confidence"], "regime_state": v["regime"]["state"],
+                       "market_state": market_state},
             )
             record["executed"] = False
             summary["entries"].append(record)

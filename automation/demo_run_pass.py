@@ -13,6 +13,14 @@ Three separate, deterministic passes:
   3. The SAME bundle, plus two deliberately bad entries (a stale quote, a
      quote that never traded) — proving the per-symbol data sanity check
      skips just those symbols without disturbing the rest of the pass.
+  4. The market risk-off switch turns RISK-OFF (SPY in a year-long slide):
+     a held position with no price trigger exits via "market_risk_off",
+     and every new buy is blocked as a "market_sitout".
+  5. The market data is MISSING: the switch is "unknown", which blocks
+     every new buy but must NOT force an exit (no fire sale on a glitch).
+
+Passes 1-3 run with a RISK-ON market (SPY steadily rising), so the switch
+doesn't interfere with what they prove.
 
 Uses an ISOLATED paper account (logs/demo_automation_portfolio.json, via
 PaperBroker's portfolio_path override), same reasoning as
@@ -67,6 +75,26 @@ def _build_symbol_bundle(symbol: str, price: float, ema: float, rsi: float, regi
         "regime_ema": _indicator(symbol, "ema", config.REGIME_EMA_LOOKBACK_DAYS, regime_ema),
         "robinhood_fundamentals": _fundamentals(symbol),
     }
+
+
+def _spy_monthly(rising: bool) -> dict:
+    """A raw monthly get_equity_historicals response for SPY: 49 bars ending
+    with IN_HOURS_NOW's month (July 2026, still in progress, so the switch
+    ignores it). Steady rise -> risk_on; a rise then a year-long slide ->
+    risk_off."""
+    if rising:
+        closes = [300 * 1.01 ** i for i in range(49)]
+    else:
+        closes = [300 * 1.01 ** i for i in range(35)] + [300 * 1.01 ** 34 * 0.97 ** i for i in range(1, 15)]
+    y, m, bars = 2022, 7, []
+    for c in closes:                       # Jul 2022 .. Jul 2026
+        bars.append({"begins_at": f"{y:04d}-{m:02d}-01T00:00:00Z", "close_price": f"{c:.2f}", "volume": 1000})
+        y, m = (y, m + 1) if m < 12 else (y + 1, 1)
+    return {"data": {"results": [{"symbol": "SPY", "interval": "month", "bars": bars}]}}
+
+
+MARKET_RISK_ON = _spy_monthly(rising=True)
+MARKET_RISK_OFF = _spy_monthly(rising=False)
 
 
 def _build_bundle() -> dict:
@@ -130,7 +158,7 @@ def run_demo() -> None:
     print("=" * 70)
     before_stats = trade_log.round_trip_stats()
     before_positions = dict(broker.positions)
-    summary = run_pass(bundle, now=IN_HOURS_NOW, broker=broker)
+    summary = run_pass(bundle, now=IN_HOURS_NOW, broker=broker, market_bundle=MARKET_RISK_ON)
 
     print(f"market_open={summary['market_open']}  dry_run={summary['dry_run']}")
     print(f"\nExits (sweep ran FIRST): {summary['exits']}")
@@ -149,6 +177,8 @@ def run_demo() -> None:
         "dry-run must never execute an entry"
     assert summary["holds"] == ["MSFT"]
     assert summary["regime_sitouts"] == ["GOOGL"]
+    assert summary["market"] == "risk_on" and summary["market_sitouts"] == [], \
+        "a risk-on market must not interfere"
     assert all(r.get("regime_state") for r in summary["exits"] + summary["entries"]), \
         "every logged decision must carry its regime state"
     assert broker.positions == before_positions, "dry-run must never change what's actually held"
@@ -186,7 +216,7 @@ def run_demo() -> None:
     )
 
     before_stats = trade_log.round_trip_stats()
-    bad_summary = run_pass(bad_bundle, now=IN_HOURS_NOW, broker=broker)
+    bad_summary = run_pass(bad_bundle, now=IN_HOURS_NOW, broker=broker, market_bundle=MARKET_RISK_ON)
     print(f"Symbols skipped: {bad_summary['symbols_skipped']}")
     print(f"Entries that still went through fine: {[e['symbol'] for e in bad_summary['entries']]}")
 
@@ -198,6 +228,43 @@ def run_demo() -> None:
     assert {e["symbol"] for e in bad_summary["entries"]} == {"AAPL"}
     print("-> WMT (stale) and XOM (never traded) were skipped and logged (action=\"automation_skip\") — "
           "never evaluated, never traded — while every other symbol in the same pass processed normally.")
+
+    # --- 4. Market switch RISK-OFF ---------------------------------------
+    print("\n" + "=" * 70)
+    print("4. Market switch RISK-OFF (SPY in a year-long slide)")
+    print("=" * 70)
+    calm_bundle = dict(bundle)
+    # JPM back near its entry price: no stop-loss, no take-profit -- so if it
+    # exits, only the market switch can be why.
+    calm_bundle["JPM"] = _build_symbol_bundle(
+        "JPM", price=151.0, ema=150.0, rsi=50.0, regime_ema=148.0, atr_pct=config.TARGET_DAILY_VOL_PCT,
+    )
+    before_stats, before_positions = trade_log.round_trip_stats(), dict(broker.positions)
+    off = run_pass(calm_bundle, now=IN_HOURS_NOW, broker=broker, market_bundle=MARKET_RISK_OFF)
+    print(f"market={off['market']}  exits={[(e['symbol'], e['path']) for e in off['exits']]}")
+    print(f"entries={off['entries']}  market_sitouts={off['market_sitouts']}  holds={off['holds']}")
+    assert off["market"] == "risk_off", off
+    assert [(e["symbol"], e["path"]) for e in off["exits"]] == [("JPM", "market_risk_off")], off["exits"]
+    assert off["exits"][0]["executed"] is False, "dry-run must never execute an exit"
+    assert off["entries"] == [], "risk-off must block every new buy"
+    assert sorted(off["market_sitouts"]) == ["AAPL", "GOOGL", "MSFT"], off["market_sitouts"]
+    assert off["holds"] == [] and off["regime_sitouts"] == [], "the market gate is checked first"
+    assert broker.positions == before_positions and trade_log.round_trip_stats() == before_stats
+    print("-> JPM (no price trigger) would exit via market_risk_off; AAPL's confident buy, MSFT and "
+          "GOOGL were all blocked as market_sitout. Nothing executed (DRY-RUN).")
+
+    # --- 5. Market data MISSING -> unknown ----------------------------------
+    print("\n" + "=" * 70)
+    print("5. Market data MISSING -> switch 'unknown'")
+    print("=" * 70)
+    unk = run_pass(calm_bundle, now=IN_HOURS_NOW, broker=broker, market_bundle=None)
+    print(f"market={unk['market']}  exits={unk['exits']}  entries={unk['entries']}  "
+          f"market_sitouts={unk['market_sitouts']}")
+    assert unk["market"] == "unknown", unk
+    assert unk["exits"] == [], "missing market data must NOT force an exit"
+    assert unk["entries"] == [] and sorted(unk["market_sitouts"]) == ["AAPL", "GOOGL", "MSFT"], unk
+    print("-> With no usable market data: every new buy blocked, JPM left alone. "
+          "When in doubt, the pass does less, not more.")
 
     print(f"\nFinal round-trip stats (unchanged all demo — everything above was DRY-RUN): "
           f"{trade_log.round_trip_stats()}")

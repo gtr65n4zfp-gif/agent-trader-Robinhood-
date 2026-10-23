@@ -5,8 +5,8 @@ Momentum's one robust property was smaller drawdowns, so this tests that
 property directly as a **market-wide seatbelt**: hold a basket, but step the
 whole thing aside into cash when the overall market's trend turns down.
 
-**Verdict: the most promising result so far, but not wired into the live
-system yet.**
+**Verdict: the most promising result so far, and now ARMED in paper/dry-run
+at the owner's request (primary variant; see "Decision" below).**
 
 - **Over 24 years of SPY (2002–2026), the switch clearly passes.** It
   roughly cut the worst drawdown from −52% to −21% and raised the Sharpe from
@@ -147,7 +147,42 @@ year for every invested month keeps the pass:
   knowledge,** not fetched data. See `TBILL_ANNUAL` in
   `backtest/run_momentum_backtest.py`.
 
-## Decision for the owner (not made here)
+## Decision: ARMED (paper / dry-run), primary variant
+
+The owner approved it after reviewing these results. What was armed:
+
+- **The rule:** the pre-registered PRIMARY variant, `bearish_only`
+  (`config.MARKET_SWITCH_VARIANT`). It switches less often than the strict
+  variant.
+- **The code:** `agents/market_switch.py`, turned on by
+  `config.MARKET_SWITCH_ENABLED`. This backtest imports its
+  `market_view()` / `is_risk_on()`, so the live rule and the tested rule
+  are the same code. That parity was verified: the results above reproduce
+  exactly.
+- **Where it acts:**
+  - `agents/judge.py`: a non-tradeable market forces HOLD, checked first.
+  - `agents/exits.py`: the new `market_risk_off` exit path.
+  - `automation/run_pass.py`: reads the switch once per pass, logs it, and
+    tags every record with `market_state`.
+  - `automation/run_scheduled.sh`: the routine now fetches SPY's monthly
+    bars each pass.
+- **Fail-safes:**
+  - Only *completed* months count; the in-progress month is ignored, which
+    matches this backtest.
+  - Missing, stale, gappy, too-short, or wrong-interval data reads as
+    "unknown". That blocks new buys and forces no exits.
+- **Proof:** `python -m agents.market_switch` covers every state and
+  fail-safe. `python -m automation.demo_run_pass` has two new passes: a
+  risk-off pass that blocks buys and exits a holding with no price
+  trigger, and a missing-data pass that blocks buys and exits nothing.
+- **Still entirely paper:** `AUTOMATION_DRY_RUN` stays True, and real money
+  remains behind the go-live gate.
+- **Not wired into `backtest/engine.py`'s daily council replay;** this
+  file is its backtest.
+
+The considerations that framed the decision are kept below for the record.
+
+### Considerations at decision time
 
 The switch is a **gate**, not a stock strategy, so it would sit inside
 `agents/regime.py` as a market-wide condition. That module is already

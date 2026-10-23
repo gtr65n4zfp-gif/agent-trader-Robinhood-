@@ -209,6 +209,73 @@ def get_regime_ema(symbol: str, raw_regime_ema: dict) -> float:
     )
 
 
+# --- Monthly bars (for the market risk-off switch) -----------------------
+
+
+def get_completed_monthly_closes(symbol: str, raw_historicals: dict, now: datetime | None = None,
+                                 min_months: int = 0) -> list[float]:
+    """
+    Parse a get_equity_historicals response (interval="month", default
+    split adjustment) into this symbol's closes for COMPLETED calendar
+    months only, oldest first. This is what agents/market_switch.py reads
+    the market's trend from.
+
+    - The current calendar month's bar (as of `now`, UTC) is dropped. Its
+      close isn't final yet, and the backtest this mirrors
+      (backtest/risk_switch_backtest.py) decides on completed month-end
+      closes only.
+    - Gap-fill bars (interpolated=true) are dropped; they carry no new info.
+    - The months that remain must be consecutive and must END with the month
+      just before `now`'s month. Otherwise the data is gappy or stale, and
+      this raises rather than letting an old trend read pass as current.
+    - Raises if fewer than `min_months` completed months remain.
+
+    raw_historicals is the unmodified MCP response for symbols=[symbol],
+    interval="month". This function makes no call itself.
+    """
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    results = raw_historicals.get("data", {}).get("results", [])
+    match = next((r for r in results if r.get("symbol") == symbol.upper()), None)
+    if match is None:
+        raise RobinhoodDataError(f"{symbol}: no results in get_equity_historicals response.")
+    if match.get("interval") not in (None, "month"):
+        raise RobinhoodDataError(f"{symbol}: expected monthly bars, got interval={match.get('interval')!r}.")
+
+    current = (now.year, now.month)
+    bars: list[tuple[tuple[int, int], float]] = []
+    for b in match.get("bars", []):
+        if b.get("interpolated"):
+            continue
+        try:
+            ym = (int(b["begins_at"][:4]), int(b["begins_at"][5:7]))
+            close = float(b["close_price"])
+        except (KeyError, TypeError, ValueError) as e:
+            raise RobinhoodDataError(f"{symbol}: malformed monthly bar {b!r}: {e}") from e
+        if ym < current:
+            bars.append((ym, close))
+    bars.sort()
+    if not bars:
+        raise RobinhoodDataError(f"{symbol}: no completed monthly bars in response.")
+
+    def _index(ym: tuple[int, int]) -> int:
+        return ym[0] * 12 + (ym[1] - 1)
+
+    for (a, _), (b, _) in zip(bars, bars[1:]):
+        if _index(b) - _index(a) != 1:
+            raise RobinhoodDataError(f"{symbol}: monthly bars not consecutive ({a} -> {b}).")
+    last_expected = _index(current) - 1
+    if _index(bars[-1][0]) != last_expected:
+        raise RobinhoodDataError(
+            f"{symbol}: latest completed month is {bars[-1][0]}, expected the month before "
+            f"{current} -- stale monthly data."
+        )
+    if any(c <= 0 for _, c in bars):
+        raise RobinhoodDataError(f"{symbol}: non-positive monthly close in response.")
+    if len(bars) < min_months:
+        raise RobinhoodDataError(f"{symbol}: only {len(bars)} completed months, need {min_months}.")
+    return [c for _, c in bars]
+
+
 # --- Sector (for the risk vetoer's concentration check) -------------------
 
 

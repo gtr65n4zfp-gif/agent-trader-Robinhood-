@@ -9,9 +9,12 @@ order:
 
     1. stop_loss        — hard, mechanical, not overridable by the judge.
     2. take_profit       — target hit, gains locked in.
-    3. regime_change      — the regime filter (agents/regime.py) has
+    3. market_risk_off   — the market-wide safety switch
+                            (agents/market_switch.py) says the whole market
+                            is in a clear downtrend: step everything aside.
+    4. regime_change      — the regime filter (agents/regime.py) has
                             flipped against the open position.
-    4. conviction_drop   — the thesis that justified holding has weakened.
+    5. conviction_drop   — the thesis that justified holding has weakened.
 
 Once a position is open, the priority is capital preservation, not
 confirmation — any one reason is enough, unlike entries.
@@ -79,6 +82,24 @@ def check_regime_change(regime: dict) -> dict:
     return {"path": "regime_change", "fires": fires, "reason": reason}
 
 
+def check_market_risk_off(market: dict) -> dict:
+    """
+    Fires only when the market switch is definitively RISK-OFF. An
+    "unknown" market (unusable data) does NOT fire: missing data blocks new
+    buys in agents/judge.py, but must never trigger a fire sale of what we
+    hold.
+
+    market: fresh agents.market_switch.evaluate() output for this pass.
+    """
+    fires = market.get("state") == "risk_off"
+    reason = (
+        f"market risk-off switch: {market['reason']}"
+        if fires else
+        f"market switch {market.get('state')}, no exit"
+    )
+    return {"path": "market_risk_off", "fires": fires, "reason": reason}
+
+
 def check_conviction_drop(
     technicals: dict, quantity: float = judge.DEFAULT_QUANTITY
 ) -> dict:
@@ -117,6 +138,7 @@ def evaluate_exits(
     technicals: dict | None = None,
     regime: dict | None = None,
     quantity: float = judge.DEFAULT_QUANTITY,
+    market: dict | None = None,
 ) -> dict | None:
     """
     Run every applicable exit path in priority order; return the first
@@ -128,6 +150,8 @@ def evaluate_exits(
     re-read isn't available for this pass.
     regime: optional agents.regime.regime_stance() output, required only
     for check_regime_change — omit to skip that check entirely.
+    market: optional agents.market_switch.evaluate() output, required only
+    for check_market_risk_off — omit to skip that check entirely.
     """
     stop = check_stop_loss(entry_price, current_price)
     if stop["fires"]:
@@ -136,6 +160,11 @@ def evaluate_exits(
     profit = check_take_profit(entry_price, current_price)
     if profit["fires"]:
         return profit
+
+    if market is not None:
+        market_signal = check_market_risk_off(market)
+        if market_signal["fires"]:
+            return market_signal
 
     if regime is not None:
         regime_signal = check_regime_change(regime)
@@ -188,6 +217,7 @@ def run_exit_sweep(
     prices: dict[str, float],
     seat_views: dict[str, dict] | None = None,
     regimes: dict[str, dict] | None = None,
+    market: dict | None = None,
 ) -> list[dict]:
     """
     Check every open position against all exit paths and close whichever
@@ -205,6 +235,8 @@ def run_exit_sweep(
     regimes: optional {symbol: agents.regime.regime_stance() output} for
     the regime_change check. Same graceful degrade: a symbol missing here
     just skips that one check for that symbol.
+    market: optional agents.market_switch.evaluate() output for the
+    market_risk_off check (market-wide, so one value for every symbol).
 
     Returns one entry per position actually closed:
     {symbol, path, reason, realized_pnl, trades}.
@@ -222,7 +254,7 @@ def run_exit_sweep(
 
         technicals = seat_views.get(symbol) if seat_views else None
         symbol_regime = regimes.get(symbol) if regimes else None
-        signal = evaluate_exits(entry_price, prices[symbol], technicals, symbol_regime)
+        signal = evaluate_exits(entry_price, prices[symbol], technicals, symbol_regime, market=market)
         if signal is None:
             continue
 
@@ -303,6 +335,19 @@ if __name__ == "__main__":
         entry_price=100.0, current_price=101.0,
         technicals=weak_technicals, regime=non_tradeable_regime,
     ))
+
+    risk_off = {"seat": "market_switch", "state": "risk_off", "tradeable": False, "reason": "SPY trend bearish"}
+    unknown = {"seat": "market_switch", "state": "unknown", "tradeable": False, "reason": "market data unusable"}
+    sig = evaluate_exits(entry_price=100.0, current_price=101.0, technicals=still_bullish_technicals,
+                         regime=tradeable_regime, market=risk_off)
+    print(f"\nMarket risk-off, no price trigger -> market_risk_off fires: {sig}")
+    assert sig and sig["path"] == "market_risk_off", sig
+    sig = evaluate_exits(entry_price=100.0, current_price=90.0, market=risk_off)
+    assert sig["path"] == "stop_loss", "price-based stop-loss keeps priority over the market switch"
+    sig = evaluate_exits(entry_price=100.0, current_price=101.0, technicals=still_bullish_technicals,
+                         regime=tradeable_regime, market=unknown)
+    print(f"Market UNKNOWN (bad data) -> must NOT force an exit: {sig}")
+    assert sig is None, sig
 
     print("\nevaluate_exits: no price trigger, no signal or regime data supplied -> stays open:")
     print(evaluate_exits(entry_price=100.0, current_price=101.0))

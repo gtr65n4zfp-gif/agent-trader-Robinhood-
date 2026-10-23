@@ -20,7 +20,9 @@ edge is discipline, not any one signal's cleverness.
 
 The regime filter can only TIGHTEN this gate, never loosen it — it's
 checked first, and a non-tradeable regime forces HOLD outright regardless
-of what the strategy signal says. There's no path where a favorable regime
+of what the strategy signal says. The market risk-off switch
+(agents/market_switch.py) is checked even before that, because it's
+market-wide: a risk-off or unknown market forces HOLD for every symbol. There's no path where a favorable regime
 overrides an otherwise-disqualifying signal; "tradeable" just means "no
 objection from price conditions," not "go."
 
@@ -47,7 +49,8 @@ CONFIDENCE_THRESHOLD = 0.5  # the strategy signal must clear this to trade
 DEFAULT_QUANTITY = 1
 
 
-def decide(technicals: dict, regime: dict | None = None, quantity: float = DEFAULT_QUANTITY) -> dict:
+def decide(technicals: dict, regime: dict | None = None, quantity: float = DEFAULT_QUANTITY,
+           market: dict | None = None) -> dict:
     """
     Weigh a strategy signal (plus an optional regime read) into a decision.
 
@@ -57,6 +60,10 @@ def decide(technicals: dict, regime: dict | None = None, quantity: float = DEFAU
     non-tradeable regime forces HOLD outright — see the module docstring:
     this can only tighten the gate, never loosen it. If supplied, it must be
     for the same symbol as the signal.
+    market: optional agents.market_switch.evaluate() output. Omit to skip
+    the market gate. A market that isn't tradeable (risk_off, or unknown
+    because its data was unusable) forces HOLD outright, checked before
+    everything else.
 
     Returns {action: buy/sell/hold, symbol, target_quantity, confidence,
     rationale, seat_inputs}.
@@ -68,6 +75,21 @@ def decide(technicals: dict, regime: dict | None = None, quantity: float = DEFAU
     seat_inputs = {"technicals": technicals}
     if regime is not None:
         seat_inputs["regime"] = regime
+    if market is not None:
+        seat_inputs["market"] = market
+
+    # Market switch first — market-wide, so it outranks any one symbol's
+    # regime or signal. Like the regime gate, it can only force a HOLD.
+    if market is not None and not market["tradeable"]:
+        return {
+            "seat": "judge",
+            "action": "hold",
+            "symbol": symbol,
+            "target_quantity": 0,
+            "confidence": 0.0,
+            "rationale": f"No-trade is the default: market risk switch — {market['state']}: {market['reason']}",
+            "seat_inputs": seat_inputs,
+        }
 
     # Regime gate first — cheapest, most decisive block, and it must never
     # be overridden by what the strategy signal says.
@@ -191,3 +213,16 @@ if __name__ == "__main__":
 
     print("\nSame bullish signal, tradeable regime (should BUY, same as no regime supplied):")
     print(decide(bullish, regime=tradeable_regime))
+
+    risk_on = {"seat": "market_switch", "symbol": "SPY", "state": "risk_on", "tradeable": True,
+               "reason": "SPY trend bullish -- no objection"}
+    risk_off = {"seat": "market_switch", "symbol": "SPY", "state": "risk_off", "tradeable": False,
+                "reason": "SPY trend bearish -- RISK-OFF"}
+    unknown = {"seat": "market_switch", "symbol": "SPY", "state": "unknown", "tradeable": False,
+               "reason": "market data unusable"}
+    assert decide(bullish, regime=tradeable_regime, market=risk_on)["action"] == "buy"
+    for m in (risk_off, unknown):
+        d = decide(bullish, regime=tradeable_regime, market=m)
+        assert d["action"] == "hold" and "market risk switch" in d["rationale"], d
+    print("\nMarket switch: risk_on -> BUY allowed; risk_off and unknown -> HOLD despite a "
+          "confident signal in a tradeable regime -- PASS")
