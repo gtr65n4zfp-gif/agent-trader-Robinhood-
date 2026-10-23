@@ -58,10 +58,12 @@ data. (See the git history and the "History" note below if you're looking for it
             mean-reversion signal, the live library's first entry
             (`agents/technicals.py`)
       - [x] Time-series momentum (trend-following) — built and backtested on
-            real Robinhood monthly data. **It failed the promotion gate** (0/8
-            symbols beat buy-and-hold on Sharpe), so it is not in the live
-            gate. Its only edge was drawdown control in the 2022 bear market
-            (`strategies/time_series_momentum.py`, `agents/MOMENTUM_RESULTS.md`)
+            real Robinhood monthly data across three universes
+            (`backtest/universes.py`). **Not promoted.** On fair universes it
+            roughly ties buy-and-hold on risk, with about 30% smaller
+            drawdowns, about half the return, and no timing edge, so it
+            narrowly fails the gate everywhere (`strategies/time_series_momentum.py`,
+            `agents/MOMENTUM_RESULTS.md`)
       - [x] Forecast strategy (quant) — plain OLS return model over
             momentum/mean-reversion/volatility features, in backtest
             validation, not yet in the live gate (`strategies/forecast_model.py`,

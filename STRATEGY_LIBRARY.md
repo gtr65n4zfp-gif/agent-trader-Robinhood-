@@ -40,6 +40,29 @@ reasons}` — so the existing machinery consumes it unchanged:
   gate — two independent signals must agree (the machinery is already kept for
   this).
 
+### Test universes (every strategy, all three)
+
+Defined once in `backtest/universes.py`, so every result says exactly which
+symbols it covered:
+
+- **`watchlist`**: the live watchlist plus SPY. It's what we trade, but it's
+  a survivorship-biased test on its own.
+- **`top30_2015`**: the ~30 largest US companies at year-end 2014. They're
+  chosen by a rule fixed at the start of the test, so later losers are
+  included.
+- **`multiasset`**: 19 ETFs across stocks, bonds, gold, commodities, real
+  estate, and sectors. This is the momentum literature's own setting.
+
+A strategy is judged on all three, never the watchlist alone. Strategy #1
+taught that the hard way: the watchlist alone made momentum look much worse
+than it is. Every universe is also run with idle cash at approximate T-bill
+rates (`--cash-tbill`), because a strategy that sits in cash shouldn't be
+scored as if cash earns nothing.
+
+**Use Sharpe only for windows where returns are positive.** For a window
+where both sides lose money, Sharpe misranks them: the calmer loser gets the
+more negative number. Judge those windows on return and drawdown.
+
 ### Per-strategy promotion gate (what "proven" means)
 
 1. **Beats its own no-gate baseline** (`judge.baseline_decide`) on held-out
@@ -65,16 +88,23 @@ easiest first.
 
 ### 1. Time-series momentum (trend-following) — *TESTED: FAILED the gate, not promoted*
 
-- **Status.** Built and tested on real data: 109 months of split-adjusted
-  monthly bars from the Robinhood MCP for the watchlist plus SPY, long-only,
-  with costs. Full write-up in `agents/MOMENTUM_RESULTS.md`. **It failed every
-  promotion check.** It beat buy-and-hold on Sharpe on 0 of 8 symbols. Its buy
-  calls were right 56.0% of the time against a 59.8% always-long base rate. It
-  came out ahead in only 1 of 4 market periods, the 2022 bear market, where it
-  lost −13% against −19% for buy-and-hold. Its one real strength is
-  drawdown control, which makes it a possible future *market risk-off
-  overlay*. That would be a separate hypothesis with its own test. The code
-  stays as a tested building block. It is not in the live gate.
+- **Status.** Built and tested on real data from the Robinhood MCP: 109
+  months of split-adjusted monthly bars, long-only, with costs, on all three
+  test universes, and with idle cash both at 0% and at approximate T-bill
+  rates. Full write-up in `agents/MOMENTUM_RESULTS.md`. **Not promoted.**
+  - **On fair universes it roughly ties buy-and-hold on risk.** Portfolio
+    Sharpe was 0.66 vs 0.68 on `top30_2015` and 0.35 vs 0.40 on
+    `multiasset` with T-bill cash.
+  - **Drawdowns were about 30% smaller** in every universe.
+  - **Total return was about half** in every universe.
+  - **There's no timing edge.** Buy calls were right no more often than
+    simply holding.
+  - **On the survivorship-biased `watchlist` it's clearly worse** (0.84 vs
+    1.15).
+  - **It narrowly fails the "beat buy-and-hold on Sharpe" check everywhere.**
+    Its robust strength is drawdown control (it clearly won 2022), which
+    points to a possible future *market risk-off overlay*. That's a separate
+    hypothesis that needs its own test.
 - **Signal.** An instrument's own trailing 12-month return (skipping the most
   recent month — the "12-1" convention) predicts its next-period return:
   positive → long, otherwise → cash (this system can't short). Classic
@@ -168,8 +198,12 @@ easiest first.
    be a fraction of the paper's. The promotion gate (beat baseline *and*
    buy-and-hold, net of costs, across regimes) is what separates a real
    remaining edge from a citation.
-2. **Universe size.** #2, #4, #5 want a real cross-section; the current
-   8-symbol watchlist is too thin to judge them. They pair with Milestone 6.
+2. **Universe size.** #2, #4, #5 want a real cross-section, and the 8-symbol
+   watchlist is too thin to judge them. Partly addressed: `top30_2015` (31
+   names) and `multiasset` (19 ETFs) in `backtest/universes.py` are usable
+   cross-sections today. A truly broad, survivorship-free universe (hundreds
+   of names, including delisted ones) still needs a bulk data source and
+   pairs with Milestone 6.
 3. **Value data is blocked here.** #5's value leg needs fundamentals, which the
    environment's network policy denies (same block that retired the SEC agent).
    Resolve the data source before committing to it, don't paper over it.

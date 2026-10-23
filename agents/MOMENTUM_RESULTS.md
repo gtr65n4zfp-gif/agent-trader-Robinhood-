@@ -1,133 +1,197 @@
-# Time-series momentum — backtest results
+# Time-series momentum: backtest results
 
-Strategy #1 from `STRATEGY_LIBRARY.md`, tested on real data. **Verdict: it
-does NOT clear the promotion gate on this watchlist and is not promoted to
-the live gate.** The process did its job: a famous strategy got rejected
-before any money was involved.
+Strategy #1 from `STRATEGY_LIBRARY.md`, tested on real data across three
+universes. **Verdict: not promoted to the live gate.** On a fair test, with a
+broad universe and cash earning interest, long-only momentum is roughly
+*risk-equivalent* to buy-and-hold. It has consistently smaller drawdowns, about
+half the total return, and no timing edge. It narrowly fails the gate's
+"beat buy-and-hold on Sharpe" check in every universe. Its one robust property,
+drawdown reduction, makes it a candidate *risk overlay*. That is a separate
+hypothesis that needs its own test.
 
 ## What was tested
 
 - **Signal:** `strategies/time_series_momentum.py`, the classic "12-1" rule.
-  The signal is the trailing 12-month return, skipping the most recent month.
-  Each symbol's trend size is measured against its own typical trend, which
-  sets both the neutral band and the confidence.
-- **How it trades here: long-only.** `execution/paper_broker.py` can't short,
-  so a bullish month means hold the stock and anything else means sit in cash.
-  The literature's long-short version is in the results JSON for reference
-  only, because this system can't trade it.
-- **Data:** real monthly bars from the Robinhood MCP (`get_equity_historicals`,
-  split-adjusted), Jan 2015 – Sep 2026, for the watchlist plus SPY. There were
-  109 scored decision months per symbol (Aug 2017 – Aug 2026). Before that, 12
-  months were needed to build the lookback and 20 more to estimate the typical
-  trend size.
-- **Costs:** 5 bps per side on every position change (`config.SLIPPAGE_BPS`,
-  the same haircut PaperBroker applies).
-- **Harness / driver:** `backtest/momentum_backtest.py`,
-  `backtest/run_momentum_backtest.py`. Signals are lookahead-safe through
-  `backtest/data.py`'s `bars_through()`. Monthly bars with a 1-month horizon
-  mean the scored windows don't overlap.
-- **Reproduce:** fetch the same monthly bars and save the raw JSON, then run
-  `python -m backtest.run_momentum_backtest <path>`. The raw cache and the full
-  results JSON live under `logs/backtests/` and are git-ignored by convention.
-  The numbers below are the record.
+  It takes the trailing 12-month return and skips the most recent month. The
+  neutral band and confidence are scaled to each symbol's own typical trend
+  size.
+- **Long-only.** `execution/paper_broker.py` can't short, so "bullish" means
+  hold it and anything else means cash. The literature's long-short version
+  is kept in the results JSON for reference only.
+- **Data:** real split-adjusted monthly bars from the Robinhood MCP
+  (`get_equity_historicals`), Jan 2015 – Sep 2026. That gives 109 scored
+  decision months per symbol (Aug 2017 – Aug 2026), after 12 months of
+  lookback and 20 more to estimate the typical trend size.
+- **Costs:** 5 bps per side on every position change (`config.SLIPPAGE_BPS`).
+- **Two scores:** each symbol on its own, and an **equal-weight portfolio**
+  across the universe, rebalanced monthly. The portfolio is the headline,
+  because that's how the momentum literature evaluates the strategy.
+- **Code:** `backtest/momentum_backtest.py` (harness),
+  `backtest/run_momentum_backtest.py` (driver), and `backtest/universes.py`
+  (the three symbol lists and how each was chosen). Signals are
+  lookahead-safe through `backtest/data.py`'s `bars_through()`.
+- **Reproduce:** fetch monthly bars for a universe and save the raw MCP JSON,
+  then run `python -m backtest.run_momentum_backtest <universe> <files...>
+  [--cash-tbill]`. Raw caches and result JSON live under the git-ignored
+  `logs/backtests/`; the numbers below are the record.
 
-## Results — full period (Aug 2017 – Aug 2026)
+## The three universes
 
-"In-mkt" is the share of months the strategy actually held the stock. Ret is
-total compounded return, Shp is annualized Sharpe (with the risk-free rate
-taken as 0), and DD is max drawdown.
+| Universe | What it is | Why |
+|---|---|---|
+| `watchlist` | The live watchlist plus SPY (8 scored; NBIS excluded, see below) | What the system actually trades |
+| `top30_2015` | ~30 largest US companies at **year-end 2014**: AAPL, XOM, MSFT, BRK.B, GOOGL, JNJ, WFC, GE, WMT, JPM, PG, CVX, PFE, META, VZ, ORCL, KO, BAC, INTC, T, GILD, MRK, AMZN, DIS, IBM, V, PEP, CMCSA, HD, CSCO, C | Chosen by a rule fixed at the **start** of the test, not by hindsight, so later disappointments (GE, IBM, INTC, XOM, T, VZ, C...) are included |
+| `multiasset` | 19 ETFs: US/intl/EM stocks, Treasuries, corporate and high-yield bonds, gold, commodities, real estate, 9 US sectors | The momentum literature's own setting: a diversified cross-asset basket |
 
-| Symbol | In-mkt | Strategy ret | Strategy Sharpe | Strategy DD | Buy-hold ret | Buy-hold Sharpe | Buy-hold DD | Beats B&H (Sharpe) | Shallower DD |
-|---|---|---|---|---|---|---|---|---|---|
-| AAPL  | 78% | +144.5%  | 0.51  | −39.6% | +711.8%  | 0.97 | −30.7% | no | no  |
-| MSFT  | 77% | +180.7%  | 0.72  | −35.4% | +585.6%  | 1.01 | −31.0% | no | no  |
-| GOOGL | 76% | +272.2%  | 0.70  | −24.2% | +620.0%  | 0.92 | −40.4% | no | yes |
-| JPM   | 67% | +91.4%   | 0.50  | −35.4% | +263.8%  | 0.71 | −38.5% | no | yes |
-| JNJ   | 62% | −30.7%   | −0.22 | −57.3% | +99.9%   | 0.52 | −19.9% | no | no  |
-| NVDA  | 75% | +1719.8% | 1.02  | −43.2% | +5288.9% | 1.19 | −62.8% | no | yes |
-| TSLA  | 61% | +419.9%  | 0.57  | −50.0% | +1394.6% | 0.75 | −67.7% | no | yes |
-| SPY   | 81% | +161.4%  | 0.83  | −19.9% | +208.0%  | 0.85 | −24.8% | no | yes |
+Limits of these universes (also in `backtest/universes.py`):
 
-**NBIS was excluded.** As Yandex, it was halted from Mar 2022 to Sep 2024 at a
-frozen $18.94 on zero volume. The driver drops everything through the last
-zero-volume bar, which left 24 continuous months. That's too few for a
-12-month signal, so NBIS is excluded rather than scored on fake prices.
+- The 2015 ranking comes from general knowledge, so the order near #30 is
+  approximate.
+- It isn't fully survivorship-free: no mega-cap delisted, and delisted
+  tickers can't be fetched anyway.
 
-**Pooled across the 8 symbols:**
-- **"Buy" calls were right 56.0% of the time** (95% CI 52.1–59.8%). The base
-  rate of up-months was **59.8%**, so buying blind would have done at least as
-  well. The signal shows no timing edge.
-- All directional calls together scored 51.4% accuracy (95% CI 47.9–54.9%),
-  which is indistinguishable from a coin flip.
-- It beat buy-and-hold on Sharpe for **0 of 8** symbols and had a shallower
-  drawdown for **5 of 8**.
+## Data checks
 
-## Results — by market period
+- **All 50 symbols** had a full 141 months, no gap-fill bars, and no
+  zero-volume bars, except NBIS.
+- **NBIS (ex-Yandex) is excluded.** It was frozen at $18.94 on zero volume for
+  31 months during its 2022–24 halt. The driver drops everything through the
+  last zero-volume bar, which left 24 months: too few for a 12-month signal.
+- **No splits or spin-offs show up as fake crashes.** NVDA starts at $0.48
+  (fully split-adjusted). Known spin-off months show no artificial drop: GE
+  +23.6% (Jan 2023, GE HealthCare) and +14.3% (Apr 2024, Vernova), T +5.7%,
+  PFE +20.4%, MRK +2.5%. Robinhood's history appears adjusted for spin-offs
+  as well as splits.
+- **Unverified 2026 moves:** INTC +114% (Apr 2026), ORCL +39.9% then −35.1%
+  (May–Jun 2026), GOOGL +33.8% (Apr 2026), CSCO +31.6% (May 2026). These are
+  beyond what could be cross-checked. They were left as-is, since the
+  strategy and buy-and-hold both see the same prices.
+- **Prices only, no dividends,** on both sides. That understates buy-and-hold
+  slightly more, because it holds every month.
 
-These are average per-symbol returns over each window of decision months.
+## Cash interest
 
-| Period | Months | Strategy | Buy-hold | Time in market | Strategy ahead on |
-|---|---|---|---|---|---|
-| Late-cycle bull + 2018 selloffs | 29 | +20.6%  | +59.5%  | 69% | 0/8 |
-| COVID crash + recovery          | 24 | +151.9% | +162.3% | 91% | 0/8 |
-| 2022 bear market                | 12 | **−13.0%** | **−18.8%** | 43% | **6/8** |
-| 2023–26 bull                    | 44 | +93.7%  | +243.0% | 72% | 0/8 |
+The first watchlist run credited idle cash with 0%. For a strategy that sits
+in cash 30–40% of the time, that matters: real 3-month T-bills paid about
+5% a year in 2023–24. Each universe was therefore run twice. The second run
+(`--cash-tbill`) credits cash months with the year's approximate average
+3-month T-bill rate, and computes Sharpe on excess return over that rate.
 
-This is the classic trend-following shape. In the one sustained bear market
-the strategy stepped aside for more than half the months and lost less. In
-every rising market it lagged badly, because it sat in cash during dips that
-quickly recovered and re-entered late.
+The rates (`TBILL_ANNUAL` in the driver) are **approximate, from general
+knowledge**, not fetched data. They can't come from the price feed: T-bill
+ETFs like BIL pay their yield as dividends, so their price is flat. 2025–26
+are the least certain. This makes the run a sensitivity check, not a precise
+figure.
+
+## Headline: equal-weight portfolio, full period (Aug 2017 – Aug 2026)
+
+| Universe | Cash | Strategy return | Strategy Sharpe | Strategy max DD | Buy-hold return | Buy-hold Sharpe | Buy-hold max DD | Time in market |
+|---|---|---|---|---|---|---|---|---|
+| watchlist  | 0%     | +284.2% | 0.94 | −20.3% | +882.3% | **1.27** | −30.7% | 72% |
+| watchlist  | T-bill | +314.2% | 0.84 | −20.2% | +882.3% | **1.15** | −30.7% | 72% |
+| top30_2015 | 0%     | +86.0%  | 0.84 | **−15.7%** | +186.3% | 0.85 | −21.8% | 59% |
+| top30_2015 | T-bill | +104.4% | 0.66 | **−15.7%** | +186.3% | 0.68 | −21.8% | 59% |
+| multiasset | 0%     | +40.0%  | 0.56 | **−12.8%** | +82.9%  | 0.61 | −18.1% | 58% |
+| multiasset | T-bill | +55.1%  | 0.35 | **−12.8%** | +82.9%  | 0.40 | −18.1% | 58% |
+
+How to read it:
+
+- **On the watchlist, momentum is clearly worse.** That's the
+  survivorship-biased case.
+- **On the two fair universes, the Sharpe gap is tiny** (0.66 vs 0.68; 0.35
+  vs 0.40). That's well within the noise of nine years of monthly data, so it
+  should be read as a draw, not a win for either side.
+- **The portfolio drawdown is about 30% smaller in every universe.**
+- **Total return is about half** in every universe.
+
+## Timing: does a "buy" call beat always holding?
+
+Pooled across symbols, buy calls were right about as often as simply holding
+would have been. There's no timing edge.
+
+| Universe | Buy calls | Right | 95% CI | Base up-month rate |
+|---|---|---|---|---|
+| watchlist  | 629   | 56.0% | 52.1–59.8% | 59.8% |
+| top30_2015 | 2,002 | 54.5% | 52.3–56.6% | 54.7% |
+| multiasset | 1,209 | 56.8% | 54.0–59.6% | 56.1% |
+
+## Which symbols it beat
+
+With T-bill cash, it beat buy-and-hold on Sharpe for these symbols:
+
+- **top30_2015 (7/31):** XOM, GE, WMT, PFE, ORCL, T, AMZN. Mostly names that
+  went through long slides, where getting out helped.
+- **multiasset (4/19):** EEM, TLT, IEF, LQD. Emerging markets plus the three
+  bond funds, which it got out of before the 2022 rate shock. Holding TLT
+  lost −39.3%; the strategy lost −4.0%.
+
+Shallower drawdown than buy-and-hold: 21/31 and 14/19 symbols.
+
+## By market period (equal-weight portfolio, T-bill cash)
+
+| Period | top30_2015: strategy | top30_2015: buy-hold | multiasset: strategy | multiasset: buy-hold |
+|---|---|---|---|---|
+| Late-cycle bull + 2018 selloffs (29 mo) | **+20.9%**, Shp **0.88**, DD −6.4% | +29.2%, Shp 0.74, DD −11.1% | +11.4%, Shp **0.53**, DD −5.9% | +14.6%, Shp 0.47, DD −10.7% |
+| COVID crash + recovery (24 mo) | +5.7%, Shp 0.28, DD −15.7% | **+27.3%, Shp 0.72**, DD −19.3% | +7.3%, Shp 0.38, DD −12.8% | **+24.1%, Shp 0.77**, DD −16.9% |
+| 2022 bear market (12 mo) | **−3.9%, DD −6.4%** (Shp −0.80) | −6.1%, DD −21.3% (Shp −0.26) | **−0.2%, DD −4.9%** (Shp −0.31) | −4.7%, DD −17.2% (Shp −0.28) |
+| 2023–26 bull (44 mo) | +66.3%, Shp **1.23**, DD −4.8% | +85.5%, Shp 1.18, DD −7.6% | +30.0%, Shp 0.44, DD −4.8% | +35.0%, Shp 0.43, DD −8.6% |
+
+**About the 2022 row.** The automated per-window check scored 2022 as a loss
+on Sharpe. That's an artifact. When both sides lose money, Sharpe divides a
+negative mean by volatility, so the *calmer* loser gets the *more negative*
+number. In 2022 the strategy lost less money and had a third to a quarter of
+the drawdown. By any sensible standard it won that year.
+
+Read correctly, each fair universe comes out the same way:
+
+- **Late-cycle 2017–19:** the strategy wins on risk.
+- **2022:** the strategy wins.
+- **2023–26:** a draw.
+- **COVID:** the strategy loses clearly. It's the textbook trend-following
+  failure in a V-shaped crash: it got out after the drop, missed the rebound,
+  and re-entered late.
 
 ## Promotion gate (from `STRATEGY_LIBRARY.md`)
 
-| Check | Result |
-|---|---|
-| Beats its own baseline (timing accuracy clearly above the always-long base rate) | **FAIL**: 56.0% vs 59.8% |
-| Beats buy-and-hold on risk-adjusted return (Sharpe), net of costs | **FAIL**: 0/8 symbols |
-| Holds across ≥3 regimes | **FAIL**: ahead in 1 of 4 periods (the bear market) |
-| Independence check vs. the incumbent Technicals signal | Not reached, because it failed the gates above |
+| Check | watchlist | top30_2015 | multiasset |
+|---|---|---|---|
+| Beats its own baseline (timing above the always-long base rate) | FAIL | FAIL (54.5% vs 54.7%) | FAIL (56.8% vs 56.1%, CI overlaps) |
+| Beats buy-and-hold on Sharpe, net of costs (portfolio, T-bill cash) | FAIL (0.84 vs 1.15) | FAIL, narrowly (0.66 vs 0.68) | FAIL, narrowly (0.35 vs 0.40) |
+| Holds across ≥3 regimes | FAIL | 3 of 4 (with 2022 read correctly) | 3 of 4 (with 2022 read correctly) |
 
-**Not promoted.** The live gate is unchanged.
+**Not promoted.** The live gate is unchanged. The first two checks fail in
+every universe, and they're the ones that say whether momentum improves on
+just holding.
 
-## Why, and what this does and doesn't tell us
+## What this means
 
-Be careful about over-reading this. Here's what the test does **not** show:
-
-- **It doesn't refute the momentum literature.** The published edge comes from
-  diversified long-short portfolios of futures across bonds, currencies,
-  commodities, and equity indexes. This test ran something quite different:
-  single stocks, long-only, one at a time.
-- **The period and the watchlist are both heavily tilted toward buy-and-hold.**
-  2015–2026 was a historic bull run, and the watchlist is made of names that
-  are *today's* winners (NVDA, TSLA, AAPL...). That survivorship bias is
-  exactly the setting where holding is hardest to beat.
-- **Cash was assumed to earn 0%.** Real cash earned meaningful interest in
-  2023–2025, which would help a strategy that sits in cash 20–40% of the time.
-  It's a small bias that wouldn't come close to closing gaps this large.
-- **The pooled confidence intervals are optimistic.** They treat
-  symbol-months as independent, but these stocks move together.
-
-Here's what it **does** show:
-
-- As an **entry signal** on this watchlist, 12-1 momentum adds nothing.
-  Its buy timing is no better than being always long, and it costs a large
-  amount of upside.
-- Its one real property is **drawdown control in a sustained decline**.
-  It had shallower drawdowns on 5 of 8 symbols, came out ahead in 2022, and on
-  SPY specifically it was almost risk-equivalent to holding (Sharpe 0.83 vs
-  0.85) with a −19.9% vs −24.8% worst drawdown. That points to a possible
-  future role as a **market risk-off overlay** (for example, "stay out of
-  equities when SPY's 12-1 trend is negative") rather than a per-stock entry
-  signal. That would be a different hypothesis with its own test. It isn't
-  something this result licenses on its own.
+1. **As an entry signal, momentum adds nothing here.** It has no timing edge
+   in any universe, and it gives up about half the return.
+2. **The first watchlist test overstated how bad it is.** On a fair universe
+   with fair cash, momentum is roughly risk-equivalent to holding, not
+   clearly worse. The watchlist of today's mega-cap winners was a test the
+   strategy was almost bound to fail.
+3. **Drawdown reduction is the robust finding.** The portfolio drawdown was
+   about 30% smaller in all three universes, with shallower drawdowns on
+   most individual symbols, and the strategy clearly won the 2022 bear
+   market. That's consistent with the literature's "crisis alpha"
+   description of trend-following.
+4. **What this does not show.** It doesn't refute the momentum literature.
+   The published edge is long-*short* on diversified futures with
+   volatility-scaled sizing. This test was long-only, equal-weight, and
+   unleveraged, which is a meaningfully weaker version.
 
 ## Next
 
-- Leave momentum out of the live gate. Keep the code: it's tested, it's
-  correct, and it's reusable as a building block. Cross-sectional momentum
-  (strategy #2) ranks symbols by this same trailing return.
-- Before building strategy #2, note the lesson this run teaches about
-  **universe**: an 8-name list of today's mega-cap winners is a poor test bed
-  for any strategy whose job is to beat holding them. Cross-sectional
-  strategies need a broader, survivorship-aware universe even more than this
-  one did (see `STRATEGY_LIBRARY.md` caveat 2).
+- **Leave momentum out of the live gate.** Keep the code: it's tested and
+  reusable.
+- **A specific hypothesis worth testing later is a market risk-off overlay.**
+  The idea: keep the normal strategy, but go to cash when a *broad* trend
+  signal (SPY's, or a multi-asset basket's) turns negative. The goal would
+  be drawdown control, judged on drawdown and Sharpe rather than raw return.
+  This is a new hypothesis with its own test; nothing above licenses it on
+  its own.
+- **Use all three universes for every future strategy.** Strategy #2
+  (cross-sectional momentum) needs a broad universe even more, because it
+  ranks symbols against each other, so `top30_2015` and `multiasset` are its
+  natural test beds.

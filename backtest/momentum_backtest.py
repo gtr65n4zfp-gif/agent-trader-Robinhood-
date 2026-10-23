@@ -94,8 +94,13 @@ def _max_drawdown(rets: list[float]) -> float:
     return worst
 
 
-def _summary(rets: list[float], periods_per_year: float) -> dict:
-    sharpe = _sharpe(rets, periods_per_year)
+def _summary(rets: list[float], periods_per_year: float, cash: list[float] | None = None) -> dict:
+    """Total return and drawdown on the raw returns; Sharpe on EXCESS
+    returns over cash when a per-step cash series is supplied (the
+    textbook definition -- with no cash series it's the raw-return Sharpe,
+    i.e. a 0% risk-free rate)."""
+    excess = [r - c for r, c in zip(rets, cash)] if cash else rets
+    sharpe = _sharpe(excess, periods_per_year)
     return {
         "total_return": round(_compound(rets), 4),
         "sharpe": round(sharpe, 3) if sharpe is not None else None,
@@ -106,7 +111,8 @@ def _summary(rets: list[float], periods_per_year: float) -> dict:
 def run_validation(bars: list[dict], symbol: str = "TEST", horizon: int = HORIZON_DAYS,
                    lookback: int = tsm.LOOKBACK_DAYS, skip: int = tsm.SKIP_DAYS,
                    periods_per_year: float = 12, cost_bps: float = config.SLIPPAGE_BPS,
-                   score_from: str | None = None, score_to: str | None = None) -> dict:
+                   score_from: str | None = None, score_to: str | None = None,
+                   cash_annual_by_year: dict[int, float] | None = None) -> dict:
     """
     Step through `bars` (chronological parse_bars() output), generate the
     momentum signal at each bar from only the bars up to that bar, score it
@@ -120,6 +126,10 @@ def run_validation(bars: list[dict], symbol: str = "TEST", horizon: int = HORIZO
     decision dates are SCORED (for per-regime breakdowns). The signal still
     reads all history before score_from -- only the scoring is windowed, so
     a window's first decision isn't starved of lookback.
+    cash_annual_by_year: optional {year: annual cash rate as a fraction,
+    e.g. 0.05}. When given, a long-only step spent OUT of the market earns
+    that year's rate / periods_per_year instead of 0%, and every Sharpe is
+    computed on excess return over that cash rate. None = cash earns 0%.
 
     Returns per-symbol metrics plus the raw counts pool_results() needs.
     """
@@ -134,6 +144,9 @@ def run_validation(bars: list[dict], symbol: str = "TEST", horizon: int = HORIZO
     up_periods = 0               # unconditional base rate: "always bullish" baseline
 
     lo_rets: list[float] = []    # long-only (what this system can trade)
+    step_dates: list[str] = []   # decision date of each non-overlapping step
+    step_longs: list[int] = []   # long-only position taken that step (1 = holding, 0 = cash)
+    step_cash: list[float] = []  # cash return available that step (0.0 unless cash_annual_by_year)
     ls_rets: list[float] = []    # long-short (reference only)
     bh_rets: list[float] = []    # buy-and-hold
     lo_pos = ls_pos = 0
@@ -172,11 +185,17 @@ def run_validation(bars: list[dict], symbol: str = "TEST", horizon: int = HORIZO
         if step_cursor is None or i >= step_cursor + horizon:
             new_lo = 1 if view["stance"] == "bullish" else 0
             new_ls = {"bullish": 1, "bearish": -1}.get(view["stance"], 0)
-            lo_rets.append(new_lo * fwd - abs(new_lo - lo_pos) * cost)
-            ls_rets.append(new_ls * fwd - abs(new_ls - ls_pos) * cost)
+            cash = (cash_annual_by_year.get(int(dates[i][:4]), 0.0) / periods_per_year
+                    if cash_annual_by_year else 0.0)
+            # Out of the market = sitting in cash, earning cash.
+            lo_rets.append((fwd if new_lo else cash) - abs(new_lo - lo_pos) * cost)
+            ls_rets.append((new_ls * fwd if new_ls else cash) - abs(new_ls - ls_pos) * cost)
             bh_rets.append(fwd - (0.0 if bh_started else cost))
             lo_pos, ls_pos, bh_started = new_lo, new_ls, True
             long_steps += new_lo
+            step_dates.append(dates[i])
+            step_longs.append(new_lo)
+            step_cash.append(cash)
             step_cursor = i
 
     directional_calls = bullish_calls + bearish_calls
@@ -184,8 +203,9 @@ def run_validation(bars: list[dict], symbol: str = "TEST", horizon: int = HORIZO
     acc_ci = equity_metrics.wilson_ci(directional_correct, directional_calls)
     base = up_periods / scored if scored else None
 
-    long_only = _summary(lo_rets, periods_per_year)
-    buy_hold = _summary(bh_rets, periods_per_year)
+    cash_series = step_cash if cash_annual_by_year else None
+    long_only = _summary(lo_rets, periods_per_year, cash_series)
+    buy_hold = _summary(bh_rets, periods_per_year, cash_series)
 
     return {
         "symbol": symbol,
@@ -201,9 +221,14 @@ def run_validation(bars: list[dict], symbol: str = "TEST", horizon: int = HORIZO
         "baseline_accuracy": round(base, 4) if base is not None else None,   # "always bullish"
         "bullish_hit_rate": round(bullish_correct / bullish_calls, 4) if bullish_calls else None,
         "steps": len(lo_rets),
+        # Per-step series, so a driver can combine symbols into an
+        # equal-weight portfolio by date (see pool_portfolio()).
+        "step_returns": [{"date": d, "long": pos, "cash": round(c, 6),
+                          "long_only": round(lo, 6), "buy_hold": round(bh, 6)}
+                         for d, pos, c, lo, bh in zip(step_dates, step_longs, step_cash, lo_rets, bh_rets)],
         "time_in_market": round(long_steps / len(lo_rets), 4) if lo_rets else None,
         "long_only": long_only,
-        "long_short_reference": _summary(ls_rets, periods_per_year),
+        "long_short_reference": _summary(ls_rets, periods_per_year, cash_series),
         "buy_hold": buy_hold,
         # Promotion-gate checks (screening-grade -- see module docstring).
         # beats_baseline: accuracy CI lower bound clears the always-bullish
@@ -245,6 +270,52 @@ def pool_results(results: list[dict]) -> dict:
     }
 
 
+def pool_portfolio(results: list[dict], periods_per_year: float = 12,
+                   score_from: str | None = None, score_to: str | None = None) -> dict:
+    """
+    Combine symbols into an EQUAL-WEIGHT PORTFOLIO, the way the momentum
+    literature evaluates the strategy (a basket, not one name at a time).
+
+    Each step date, capital is split equally across every symbol that has a
+    scored step that date. Strategy side: each slot either holds its symbol
+    (bullish) or sits in cash. Benchmark side: every slot holds its symbol.
+    A symbol only enters the basket once it has enough history to be scored,
+    and both sides use exactly the same symbols each date -- apples to apples.
+
+    score_from / score_to: optional inclusive "YYYY-MM-DD" bounds on which
+    step dates count (for per-regime windows).
+    """
+    by_date: dict[str, list[dict]] = {}
+    for r in results:
+        for st in r.get("step_returns", []):
+            if (score_from and st["date"] < score_from) or (score_to and st["date"] > score_to):
+                continue
+            by_date.setdefault(st["date"], []).append(st)
+    dates = sorted(by_date)
+    lo, bh, exposure, breadth, cash = [], [], [], [], []
+    for d in dates:
+        rows = by_date[d]
+        lo.append(sum(x["long_only"] for x in rows) / len(rows))
+        bh.append(sum(x["buy_hold"] for x in rows) / len(rows))
+        cash.append(rows[0].get("cash", 0.0))   # same rate for every symbol that date
+        exposure.append(sum(x["long"] for x in rows) / len(rows))
+        breadth.append(len(rows))
+    cash_series = cash if any(cash) else None
+    strat, bench = _summary(lo, periods_per_year, cash_series), _summary(bh, periods_per_year, cash_series)
+    return {
+        "months": len(dates),
+        "first": dates[0] if dates else None,
+        "last": dates[-1] if dates else None,
+        "avg_symbols": round(sum(breadth) / len(breadth), 1) if breadth else 0,
+        "avg_exposure": round(sum(exposure) / len(exposure), 4) if exposure else None,
+        "long_only": strat,
+        "buy_hold": bench,
+        "beats_buyhold": (strat["sharpe"] is not None and bench["sharpe"] is not None
+                          and strat["sharpe"] > bench["sharpe"]),
+        "shallower_drawdown": strat["max_drawdown"] > bench["max_drawdown"],
+    }
+
+
 if __name__ == "__main__":
     # Self-test with synthetic bars -- deterministic, offline.
     from datetime import date, timedelta
@@ -278,8 +349,23 @@ if __name__ == "__main__":
     print(f"  scored={res_m['scored_periods']} long_only={res_m['long_only']}")
     assert res_m["scored_periods"] > 0, res_m
 
+    print("\nCash earns interest when supplied: long-only total return must rise...")
+    with_cash = run_validation(_bars(up_leg + down_leg), cash_annual_by_year={2020: 0.05, 2021: 0.05, 2022: 0.05})
+    print(f"  cash@0%={res['long_only']['total_return']}  cash@5%={with_cash['long_only']['total_return']}")
+    assert with_cash["long_only"]["total_return"] > res["long_only"]["total_return"], (with_cash, res)
+    assert with_cash["buy_hold"]["total_return"] == res["buy_hold"]["total_return"], "buy-hold never holds cash"
+
     pooled = pool_results([res, res_m])
     print(f"\nPooled: {pooled}")
     assert pooled["directional_calls"] > 0, pooled
+
+    print("\nEqual-weight portfolio of ONE symbol must equal that symbol's own numbers...")
+    port = pool_portfolio([res])
+    print(f"  portfolio long_only={port['long_only']}  symbol long_only={res['long_only']}")
+    # Tolerance, not equality: step_returns are stored rounded to 6 places.
+    for side in ("long_only", "buy_hold"):
+        for k, tol in (("total_return", 1e-3), ("sharpe", 1e-2), ("max_drawdown", 1e-3)):
+            assert abs(port[side][k] - res[side][k]) < tol, (side, k, port[side], res[side])
+    assert abs(port["avg_exposure"] - res["time_in_market"]) < 1e-3, (port, res)
 
     print("\nPASS -- momentum backtest harness scores long-only, charges costs, and pools.")
