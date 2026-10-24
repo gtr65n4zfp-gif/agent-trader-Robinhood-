@@ -1,6 +1,6 @@
 # SPY bull put spread: pre-registered test design
 
-**Status: PRE-REGISTERED.** This document and
+**Status: PRE-REGISTERED, then RUN: FAIL** (see `agents/PUT_SPREAD_RESULTS.md`). This document and
 `backtest/run_put_spread_backtest.py` were committed BEFORE any option
 price for this test was fetched. Results go in
 `agents/PUT_SPREAD_RESULTS.md`. Nothing below may change after

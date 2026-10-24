@@ -62,6 +62,9 @@ VARIANTS = {                 # name -> (needs gate pass, needs switch risk-on)
     "ungated_no_switch": (False, False),
 }
 MAX_EXPS_PER_LOOKUP = 8
+# POST-HOC only (chosen after the pre-registered run): a realistic SPY fill,
+# a fixed $0.02 off mid per leg per side, instead of the %-of-price haircut.
+REALISTIC_COST_PER_LEG = 0.02
 
 
 # --- data loading ------------------------------------------------------------
@@ -225,9 +228,12 @@ def legs() -> list[list]:
 
 # --- stage 3: run --------------------------------------------------------------
 
-def _simulate(row: dict, man: dict, bars_by_id: dict) -> tuple[dict | None, str]:
+def _simulate(row: dict, man: dict, bars_by_id: dict,
+              fixed_cost_per_leg: float | None = None) -> tuple[dict | None, str]:
     """One weekly entry -> (trade with BOTH the spread and the Level 2
-    cash-secured-put result, "") or (None, skip_reason)."""
+    cash-secured-put result, "") or (None, skip_reason). fixed_cost_per_leg
+    replaces the pre-registered %-haircut with a fixed $ per leg per side
+    (post-hoc cost sensitivity only)."""
     d = row["date"]
     ids = [man.get((row["expiration"], float(k))) for k in (row["short_strike"], row["long_strike"])]
     if not all(ids):
@@ -243,7 +249,11 @@ def _simulate(row: dict, man: dict, bars_by_id: dict) -> tuple[dict | None, str]
         entry.append(on_d)
         after.append([b for b in bars if b["date"] > d])
     floor = config.OPTIONS_ROUNDTRIP_HAIRCUT_PCT
-    h_short, h_long = (options_data.estimate_haircut_pct(e, floor) for e in entry)
+    if fixed_cost_per_leg is None:
+        h_short, h_long = (options_data.estimate_haircut_pct(e, floor) for e in entry)
+    else:  # the engine's haircut is round-trip %, half charged per fill
+        h_short, h_long = (min(1.0, 2 * fixed_cost_per_leg / e["close"]) if e["close"] > 0 else 0.0
+                           for e in entry)
     mult = config.OPTIONS_CONTRACT_MULTIPLIER
 
     spread = options_spread_engine.simulate_spread_trade(
@@ -412,6 +422,22 @@ def run() -> dict:
                   f"positive months {x['positive_months']}/{x['months_with_exits']} worst month "
                   f"${x['worst_month']:,.0f} | max DD ${x['max_drawdown']:,.0f} | by year {x['by_year']}")
         print()
+    print("POST-HOC cost sensitivity (NOT pre-registered): fixed "
+          f"${REALISTIC_COST_PER_LEG:.2f} per leg per side instead of the %-of-price haircut")
+    real = [t for row in p["rows"] for t in [_simulate(row, man, bars_by_id, REALISTIC_COST_PER_LEG)[0]] if t]
+    out["post_hoc_realistic_costs"] = {}
+    for name, (need_gate, need_switch) in VARIANTS.items():
+        sel = [t for t in real if (t["gate_pass"] or not need_gate) and (t["switch_on"] or not need_switch)]
+        res = {"spread": _evaluate(sel, "spread", n_weeks, months), "csp": _evaluate(sel, "csp", n_weeks, months)}
+        out["post_hoc_realistic_costs"][name] = res
+        for k in ("spread", "csp"):
+            x = res[k]
+            print(f"  [{name}] {k}: n={x['count']} win {x['win_rate']:.0%} total ${x['total_pnl']:,.0f} "
+                  f"(${x['avg_per_week']}/week) | peak capital ${x['peak_capital']:,.0f} -> "
+                  f"{x['return_on_peak_capital']:+.1%} | Sharpe {x['sharpe']} | positive months "
+                  f"{x['positive_months']}/{x['months_with_exits']} worst month ${x['worst_month']:,.0f} | "
+                  f"max DD ${x['max_drawdown']:,.0f} | by year {x['by_year']}")
+    print()
     out["trades"] = trades
     with open(RESULTS_OUT, "w") as f:
         json.dump(out, f, indent=2)

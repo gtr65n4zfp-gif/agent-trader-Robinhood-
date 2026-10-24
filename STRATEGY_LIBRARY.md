@@ -226,6 +226,13 @@ That module can only tighten: it blocks new buys and can trigger exits.
     - The flat-vol valuation gate mistakes the put skew for edge, so it
       only sold bear call spreads in a rising market.
   - Write-up: `agents/SPY_OPTIONS_VOL_EDGE_RESULTS.md`.
+- **SPY bull put spreads, weekly** (`backtest/run_put_spread_backtest.py`).
+  It's the pre-registered follow-up to the vol-edge test.
+  - **FAIL on real option prices, 2022–2026.**
+    - Headline: 137 spreads, −$7,849, positive in 7 of 44 months.
+    - With realistic costs (post-hoc), every version still loses.
+    - The Level 2 cash-secured-put version needs about $256k of cash to earn about $39 a week.
+  - Write-up: `agents/PUT_SPREAD_RESULTS.md`.
 
 ## Honest caveats (read before building any of these)
 
