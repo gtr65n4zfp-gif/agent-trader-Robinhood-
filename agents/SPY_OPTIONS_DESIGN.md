@@ -308,16 +308,27 @@ filter on top.
    engine wins the ablation), compared against real historical market
    premium.
 
-## Task 6 status — partial results in, 3 of 8 fetch chunks still open
+## Task 6 status: complete (30–45 day track); FAIL
 
-Real-data fetch for the 170 unique resolved candidates, split into 8
-chunks by expiration date. Chunks 2, 3, 4, 6, 8 done and verified (real,
-non-fabricated resolved/skip data); chunks 1, 5, 7 (~91 candidates) were
-not fetched, a deliberate cost/usage tradeoff. A full backtest run
-against the 5 available chunks is written up in
-`agents/SPY_OPTIONS_VOL_EDGE_RESULTS.md`: **GARCH beats the trailing-RV
-baseline on both forecast accuracy (MAE 0.077 vs 0.101, wins 115/188
-rows) and trade P&L (57.9% win rate / +$3,167 vs 45.6% / -$919, n=57
-trades each)** — a real, promising result, but explicitly partial
-(~60% of candidates, overlapping confidence intervals) until the
-remaining 3 chunks are fetched and the run redone.
+Re-run end to end from committed code (`backtest/run_vol_edge_backtest.py`).
+It uses real Robinhood data for every candidate: VIX history, 151 option
+contracts, and daily bars.
+
+Full write-up: `agents/SPY_OPTIONS_VOL_EDGE_RESULTS.md`. It supersedes
+the earlier partial, non-reproducible run.
+
+- **GARCH wins the forecast ablation:** MAE 0.0772 vs 0.1185, closer
+  on 53/94 rows.
+- **The headline GARCH stream loses money.**
+  - Credit spreads: 24 trades, 8.3% win rate, −$7,114.
+  - All trades: −$12,715.
+  - With one spread at a time, it was positive in 1 month of 10.
+- **The cause is structural.** The flat-sigma valuation gate reads the
+  market's normal put skew as "edge". So it only ever sold bear call
+  spreads, into a +36% market.
+- **Not an exit-rule problem.** Credit spreads still lost under every
+  post-hoc exit rule tried. So did the blocked bull put spreads
+  (−$1,237).
+- **The 7-day track was not run.** Robinhood has no VIX9D.
+- **Not promoted.** A skew-aware, further-OTM put-selling design would
+  be a new, separately pre-registered test.

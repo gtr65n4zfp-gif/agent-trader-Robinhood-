@@ -217,9 +217,15 @@ That module can only tighten: it blocks new buys and can trigger exits.
   — an OLS return model over momentum/mean-reversion/volatility features. It's
   the furthest-along candidate and the first in line for the conjunctive-gate
   promotion, pending its `backtest/forecast_backtest.py` clearing the gate.
-- **SPY options vol-edge** (`backtest/options_engine.py`, the vol-edge strand)
-  — a separate, already-built options strategy track, not part of this equity
-  signal roadmap.
+- **SPY options vol-edge** (`backtest/run_vol_edge_backtest.py`, the vol-edge
+  strand). It's a separate options track, not part of this equity signal
+  roadmap.
+  - **Tested on real option prices: FAIL.**
+    - Credit spreads won 2 of 24 trades (−$7,114).
+    - With one spread at a time, it was positive in 1 month of 10.
+    - The flat-vol valuation gate mistakes the put skew for edge, so it
+      only sold bear call spreads in a rising market.
+  - Write-up: `agents/SPY_OPTIONS_VOL_EDGE_RESULTS.md`.
 
 ## Honest caveats (read before building any of these)
 

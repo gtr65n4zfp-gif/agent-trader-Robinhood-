@@ -1,155 +1,223 @@
-# SPY vol-edge backtest — results (Task 6, partial)
+# SPY vol-edge backtest: results (Task 6, complete, 30–45 day track)
 
-Companion to `agents/SPY_OPTIONS_DESIGN.md` (the blueprint). This is a
-**partial run**, not the final word — real-data fetching for the 170
-unique resolved candidates was split into 8 chunks by expiration date;
-only **5 of 8 (chunks 2, 3, 4, 6, 8)** are fetched and verified as of this
-writeup. Chunks 1, 5, and 7 (~91 more candidates) were not fetched, a
-deliberate cost/usage tradeoff, not a data gap — see "What finishing would
-add" below. Every number here is real (no MCP calls happen in this
-analysis — it consumes only already-fetched, already-verified manifest
-data), just incomplete.
+Companion to `agents/SPY_OPTIONS_DESIGN.md` (the blueprint).
 
-## Coverage
+**Verdict: FAIL. Do not promote.**
 
-| | Baseline-driven | GARCH-driven |
-|---|---|---|
-| Signals deciding "trade" (of 188 signal×track rows) | 142 | 136 |
-| Resolved to a real simulated trade | 57 | 57 |
-| Coverage | 40.1% | 41.9% |
+- The GARCH forecast really is better at predicting volatility.
+- But the strategy built on it loses money. Credit spreads won 2 of 24
+  trades (−$7,114).
+- Credit spreads still lost under every exit rule tried after the fact,
+  and in the bull-put direction as well.
+- There is no consistent-income result here.
 
-70 unique resolved candidates came out of the 5 available chunks (83
-candidates fetched, 13 genuine skips — mostly market holidays with no
-listed expiration, and one confirmed interpolated/non-genuine entry-day
-bar excluded per the no-lookahead policy).
+This supersedes the earlier "partial" write-up of this file (5 of 8 data
+chunks, +$3,167 for GARCH). That run is **not comparable** to this one,
+for four reasons:
+- its orchestration script was never committed;
+- it mixed the 7-day and 30–45 day tracks (188 rows);
+- it used a flat 3% cost;
+- it covered ~60% of candidates.
 
-**Cost-model simplification, stated plainly:** the fetch subagents were
-asked for each leg's entry-date *close* only, not full entry-day OHLC, so
-`options_data.estimate_haircut_pct()`'s day-range-based dynamic haircut
-(the one Round 2 used) can't be computed here. This run uses the flat
-`config.OPTIONS_ROUNDTRIP_HAIRCUT_PCT` (3% round-trip) for every leg
-instead — a real, narrower cost assumption than Round 2's own per-trade
-estimate, not hidden.
+This run is fully reproducible from committed code and covers every
+candidate on the one track that could be run as designed.
 
-## GARCH ablation — forecast accuracy
+## What was run
 
-Across all 188 signal×track rows (independent of trade coverage — this
-compares forecasts against realized vol regardless of whether a trade was
-resolved):
+```
+python -m backtest.run_vol_edge_backtest plan   # signals, forecasts, decisions
+python -m backtest.run_vol_edge_backtest legs   # which contracts each trade needs
+python -m backtest.run_vol_edge_backtest run    # results -> logs/backtests/vol_edge_results.json
+```
 
-| Engine | MAE | RMSE | Rows won |
+**Signals.** The signal stream is the same as Round 2's:
+- 94 signal days, 2024-08-02 → 2026-06-10.
+- A signal day is any day the unchanged technicals+regime rule says buy
+  or sell.
+- SPY went from $532.90 to $725.43 over the window (+36%).
+
+**Data.** All data is real Robinhood data:
+- 151 option contracts with real daily bars (151 needed, 151 fetched).
+- Each contract's OCC symbol was checked against the strike, type and
+  expiration requested before use, which rules out transcription
+  errors.
+- Gap-fill (interpolated) bars were dropped.
+
+**Substitutions.** These were forced by this environment's network
+access and fixed before any option data was fetched. They are recorded
+in `backtest/run_vol_edge_backtest.py`'s docstring.
+
+1. **Implied vol** comes from Robinhood's VIX history (CBOE is
+   blocked).
+   - Robinhood has no VIX9D, so **only the 30–45 day track runs**.
+   - The 7-day track is not run, rather than run against the wrong
+     benchmark.
+2. **Point-in-time listing check.** A leg counts as tradeable only if it
+   has a real daily bar on the signal date (Polygon is blocked).
+3. **Pre-registered** (the original run never recorded these):
+   - 63-day lookback for the baseline forecast;
+   - the valuation gate trades only when the pricing edge is > 0;
+   - the headline stream is the ablation winner.
+4. **Targeted contract lookup.** Full SPY chains are too large to fetch
+   here, so only the strikes the unchanged selectors can pick were
+   looked up:
+   - the nearest strike, round(spot);
+   - the 1%-away protective strike.
+
+   14 lookups came back empty. Their expirations fell on market holidays
+   (Good Friday 2025-04-18, 2025-07-04), so those candidates are
+   skipped, never substituted.
+
+**Costs.** Costs use `options_data.estimate_haircut_pct()` on each leg's
+entry bar (3% floor, 15% ceiling), the same method as Round 2.
+
+**Exit rules.** Exits use the pre-registered rules unchanged:
+- stop at −50% and target at +100% (`config.OPTIONS_STOP_LOSS_PCT` /
+  `OPTIONS_TAKE_PROFIT_PCT`);
+- applied to the spread's net value for credit spreads;
+- ×100 per contract.
+
+## GARCH ablation: forecast accuracy (PASS)
+
+| Engine | MAE | RMSE | Rows closer |
 |---|---|---|---|
-| Baseline (trailing realized vol) | 0.1007 | 0.1466 | 73 / 188 |
-| **GARCH(1,1)** | **0.0769** | **0.119** | **115 / 188** |
+| Baseline (trailing 63-day realized vol) | 0.1185 | 0.154 | 41 / 94 |
+| **GARCH(1,1)** | **0.0772** | **0.1199** | **53 / 94** |
 
-GARCH's forecast was closer to the realized vol that actually played out
-on 115 of 188 rows (61.2%), with a meaningfully lower MAE and RMSE.
-**GARCH wins the forecast-accuracy ablation** on this dataset.
+GARCH forecasts realized volatility clearly better. Per the design, the
+**GARCH stream is the headline.**
 
-## GARCH ablation — trade P&L
+## Headline: GARCH-driven stream (FAIL)
 
-Same 188 signals, run through the identical decision/simulation pipeline
-twice — once with each engine's forecast driving `forecast_RV` — over
-whichever of the 57 candidates per stream happen to be resolved so far:
+| | Trades | Win rate (95% CI) | Total P&L | Avg / trade | Worst trade | Avg max loss / contract |
+|---|---|---|---|---|---|---|
+| **Credit spreads** | 24 | **8.3%** (2.3%–25.8%) | **−$7,113.69** | −$296.40 | −$557.09 | $396.25 |
+| Debit (long call/put) | 10 | 10.0% | −$5,601.45 | −$560.14 | −$1,187.07 | $1,388.40 |
+| All | 34 | 8.8% | −$12,715.14 | −$373.97 | −$1,187.07 | |
 
-| | Baseline-driven | **GARCH-driven** |
-|---|---|---|
-| Trades | 57 | 57 |
-| Wins / Losses | 26 / 31 | 33 / 24 |
-| Win rate | 45.6% | **57.9%** |
-| 95% Wilson CI | 33.4% – 58.4% | 45.0% – 69.8% |
-| Total realized P&L | **-$918.73** | **+$3,166.88** |
+**How the credit spreads exited.** 22 hit the stop-loss and 2 the
+take-profit. Average win +$227, average loss −$344.
 
-**GARCH wins the P&L ablation too**, on this partial sample: the
-baseline-driven stream is net negative, the GARCH-driven stream is net
-positive with a win rate above a coin flip. The two 95% CIs overlap
-(baseline's upper bound 58.4% vs. GARCH's lower bound 45.0%), so this
-is a real but not yet statistically decisive gap at n=57 per stream —
-exactly the kind of result finishing the remaining 3 chunks would sharpen.
+**Decision funnel.** 74 decisions to trade became 34 simulated trades.
+The other 40 were skipped:
+- 30: valuation edge not positive;
+- 8: holiday expiration, no contract;
+- 2: no real bar on the signal date.
 
-### Per-regime / per-side breakdown
+### Consistency: one spread at a time
 
-| Regime | Side | Baseline n / win rate / P&L | GARCH n / win rate / P&L |
-|---|---|---|---|
-| low_vol_trend | bullish | 27 / 37.0% / -$1,753.14 | 18 / 50.0% / +$625.23 |
-| low_vol_trend | bearish | 4 / 0.0% / -$913.06 | 4 / 0.0% / -$913.06 |
-| trending | bearish | 23 / 60.9% / +$1,009.15 | 25 / 60.0% / +$1,165.73 |
-| trending | bullish | 3 / 66.7% / +$738.32 | 10 / 90.0% / +$2,288.98 |
+This is the realistic small-account view: one spread open at a time,
+taken in order.
 
-The identical n/win-rate/P&L on `low_vol_trend`/bearish isn't a bug —
-both engines happened to pick the same structure and option type on those
-4 signals, so they resolved to the exact same simulated trades. The
-biggest divergence is `trending`/bullish, where GARCH both traded more
-often (10 vs. 3) and won more (90% vs. 67%) — small-n, worth re-checking
-once the remaining chunks are in rather than over-reading a 10-trade cell.
+| | Spreads | Win rate | Total | Months with an exit | Positive months | Worst month |
+|---|---|---|---|---|---|---|
+| GARCH | 10 | 10% | −$3,047.09 | 10 | **1** | −$557.09 |
 
-### vs. SPY buy-and-hold (debit trades only)
+By exit month:
+- 2024: Aug −$246, Sep −$396, Dec −$314.
+- 2025: Jan −$241, Feb −$456, Mar −$270, **Apr +$226**, Nov −$542.
+- 2026: Apr −$252, Jun −$557.
 
-Vertical credit spreads don't have a clean "capital committed" figure to
-compare against a same-dollar SPY position (you receive a credit, you
-don't pay one), so this comparison is restricted to the debit (long
-call/put) trades only, both n too small to read much into yet:
+**Against the owner's target of $50–100 a week (~$200–430 a month):**
+- this lost about **$300 in a typical active month**;
+- it was positive in 1 month of 10;
+- it made no trade at all in 13 of the 23 months.
 
-| | Baseline-driven (n=12) | GARCH-driven (n=4) |
-|---|---|---|
-| Options P&L | -$2,793.53 | +$195.66 |
-| Buy-and-hold P&L | +$30.70 | +$49.44 |
-| Delta | -$2,824.23 | +$146.22 |
+It is not a consistent-income strategy.
 
-### vs. Round 2's trading baseline
+### Safety switch view
 
-Round 2 (`agents/OPTIONS_BACKTEST_RESULTS.md`) — buy premium on every
-qualifying technicals+regime signal, no vol-edge filter — scored 37.6%
-(7-day) / 39.5% (30-45 day) win rate. The GARCH-driven vol-edge stream's
-57.9% win rate on this partial sample is well above both, and the
-baseline-driven vol-edge stream's 45.6% is also above Round 2's numbers —
-though Round 2's 93-94 signals and this run's 57-trade partial sample
-aren't the same denominator, so this is a promising early read, not a
-like-for-like final comparison yet.
+The armed market switch (`agents/market_switch.py`, `bearish_only`) read
+**risk-on for every month** of this window, so it blocked 0 spreads.
+That is the expected result: 2024–26 had no slow bear market, which is
+the only thing it is built to sit out. It can't rescue this result, and
+it wasn't tested by it either.
 
-## The plain read (partial)
+## Why it lost: a structural bias in the valuation gate
 
-On the data fetched so far, this is a real, honestly-computed result in
-GARCH's favor on both questions the ablation was designed to answer:
-better forecasts, better P&L, versus the simpler trailing-RV baseline. It
-is **not yet the final Task 6 answer** — 60% of unique candidates are
-resolved, the trade-level P&L comparison's confidence intervals still
-overlap, and the debit-vs-buy-hold comparison has too few trades to read.
-The direction of the result is consistent and non-trivial; whether it
-holds up at full coverage is the reason to finish the remaining chunks
-before treating this as conclusive.
+The bias has three parts:
 
-## What finishing would add
+1. **Every credit spread actually traded was a *bearish* bear-call
+   spread**, sold at the money into a market that rose 36%. 14 of the 24
+   were stopped out within 1–4 days, on real ~1–2% SPY rallies.
+2. **The 35 *bullish* bull-put spreads the rule wanted were all
+   blocked** by the valuation gate (29 "edge not positive", the rest
+   holidays or no bar).
+3. **The cause:**
+   - `options_valuation` prices both legs at one flat sigma.
+   - The real market prices the **put skew**: the protective OTM put
+     costs extra (crash insurance), and the OTM call costs less.
+   - So against a flat-vol model, every bull put spread looks *cheap*
+     and every bear call spread looks *rich*.
+   - Example: on 2024-10-14 the gate's model valued a 584/578 bull put
+     at $2.67 against a market price of $1.96.
+   - The gate therefore always picks the call-selling side, which was the
+     losing side in a rising market.
+   - The r=0 assumption adds a smaller push the same way (≈$0.10 per
+     6-wide spread).
 
-Chunks 1, 5, and 7 (~91 more candidates) would raise the resolved-trade
-count from 57 to an estimated ~130-140 per stream, tightening both Wilson
-CIs meaningfully and adding whatever regime/side mix those specific dates
-carry (chunk boundaries were drawn by expiration date, not by regime, so
-there's no reason to expect the missing chunks skew the result in either
-direction — but that's an assumption, not a checked fact, until they're
-actually in).
+So the "edge" the gate found was mostly the market's normal skew, not
+mispricing.
+
+## Post-hoc diagnostics (chosen after seeing the result; never a headline)
+
+These answer one question: *is it the exit rule, or the trade itself?*
+
+| Variant (GARCH credit decisions) | Trades | Win rate | Total | Worst trade | One-at-a-time positive months |
+|---|---|---|---|---|---|
+| Pre-registered (−50% stop / +100% target) | 24 | 8.3% | −$7,113.69 | −$557.09 | 1 / 10 |
+| Hold every spread to expiration | 24 | 25.0% | −$10,550.54 | −$955.75 | 1 / 6 |
+| Take profit at 50% of credit, stop when loss = credit | 24 | 33.3% | −$6,626.62 | −$584.87 | 2 / 10 |
+| The 29 blocked bull put spreads, simulated anyway | 29 | 41.4% (25.5%–59.3%) | −$1,236.69 | −$330.55 | 2 / 8 |
+
+**It's the trade, not the exit rule.** Every exit variant loses.
+
+The bull put spreads, the classic "income" trade and the right side of
+a rising market, still lost slightly:
+- 41% wins, average win +$185, average loss −$203;
+- that held even though they were sold at the money in a +36% year.
+
+At-the-money, 1%-wide, 30–45 day spreads gave back their credit about
+as often as they kept it.
+
+## The non-headline stream, for the record
+
+The **baseline-driven** stream made **+$7,863.92**:
+- its 22 long calls made +$15,359 (64% wins);
+- its credit spreads lost −$7,495, just like GARCH's.
+
+This is **not** evidence for the strategy:
+- it's the stream that *lost* the pre-registered ablation;
+- picking it now would be cherry-picking;
+- its profit is 22 bullish long calls during a +36% rally, which is
+  mostly market exposure, with ~$1,289 at risk per contract;
+- the GARCH stream's long calls and puts, on the same kind of signals,
+  lost −$5,601.
+
+## Plain read
+
+- GARCH is a better volatility forecaster.
+- Turning that into option trades, through this valuation gate and these
+  spread rules, lost money on real prices.
+- The gate is biased toward selling calls.
+- Even the unbiased direction, selling put spreads, didn't make money
+  here.
+- It fails the go-live gate, which needs positive returns *and*
+  consistency. It does not get wired into the live options path.
+
+**What could change the answer:** a strategy that sells further-OTM
+puts and uses an IV-skew-aware valuation (per-strike implied vol rather
+than one VIX number). That would be a **new, separately pre-registered
+test**, not a tweak to this one.
 
 ## Known limitations
 
-- Flat 3% round-trip haircut for every leg (see "Coverage" above) — a
-  real simplification versus Round 2's dynamic entry-range estimate,
-  because the manifest fetches only captured each leg's entry-date close.
-- Partial data: 5 of 8 chunks (~60% of unique candidates). Every number
-  above is subject to revision once the remaining 3 chunks are fetched.
-- Same limitations already stated in `agents/SPY_OPTIONS_DESIGN.md`'s
-  "Known limitations" section apply unchanged (GARCH(1,1) simplifications,
-  VIX-not-ATM-IV benchmark, independent per-leg spread cost model, reused
-  Round 2 signal stream, crowded-trade tail risk).
-
-## Code added this run
-
-- `backtest/options_metrics.summarize_by_regime_and_side()` — formalizes
-  the per-regime/per-side breakdown Round 2 assembled by hand.
-- `backtest/options_metrics.compare_forecast_accuracy()` — the GARCH
-  ablation's forecast-accuracy half (MAE/RMSE/win-count between engines).
-- The orchestration script tying candidates, both simulation engines, and
-  both new reporting functions together for this run is scratch-local
-  (consumes non-committed fetched manifest data) — the reusable logic it
-  calls is all in the two committed functions above plus the existing
-  `options_engine.py` / `options_spread_engine.py` / `options_metrics.py`
-  functions from Tasks 1-5.
+- **Thin, single-regime sample.** The window is ~2 years and mostly a
+  bull market, with only the April 2025 crash as stress.
+- **No 7-day track.** VIX9D isn't available here.
+- **Approximate costs.** They are a daily-range estimate, not real
+  bid/ask (unavailable).
+- **Approximate entry prices.** Entries fill at the signal day's close.
+- **The design doc's limitations apply unchanged:** GARCH(1,1)
+  simplifications, VIX as the IV benchmark, per-leg cost model, and the
+  reused Round 2 signals.
